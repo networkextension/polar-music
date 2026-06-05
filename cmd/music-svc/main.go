@@ -43,6 +43,10 @@ func main() {
 		BuildVersion:  envOrDefault("POLAR_MUSIC_VERSION", "0.0.1"),
 		MetricsToken:  strings.TrimSpace(os.Getenv("POLAR_MUSIC_METRICS_TOKEN")),
 		PublicBaseURL: strings.TrimSpace(os.Getenv("POLAR_MUSIC_PUBLIC_BASE_URL")),
+		// AI 智能歌单 — dock LLM proxy (OpenAI-compatible). Unset = feature 503s.
+		LLMProxyURL:   envOrDefault("POLAR_MUSIC_LLM_PROXY_URL", strings.TrimSpace(os.Getenv("POLAR_DOCK_BASE"))+"/api/proxy/v1"),
+		LLMProxyToken: strings.TrimSpace(os.Getenv("POLAR_MUSIC_LLM_PROXY_TOKEN")),
+		LLMModel:      strings.TrimSpace(os.Getenv("POLAR_MUSIC_LLM_PROXY_MODEL")),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

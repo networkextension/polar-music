@@ -35,6 +35,10 @@ type Plugin struct {
 
 	publicBaseURL string // POLAR_MUSIC_PUBLIC_BASE_URL — for the /api/nav sidebar link
 
+	llmProxyURL   string // dock LLM proxy (OpenAI-compatible) for AI 智能歌单
+	llmProxyToken string
+	llmModel      string
+
 	metrics   *musicMetrics
 	startedAt time.Time
 }
@@ -48,6 +52,9 @@ type Config struct {
 	BuildVersion  string
 	MetricsToken  string
 	PublicBaseURL string
+	LLMProxyURL   string
+	LLMProxyToken string
+	LLMModel      string
 }
 
 func New(ctx context.Context, cfg Config) (*Plugin, error) {
@@ -99,6 +106,9 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 		Ver:           cfg.BuildVersion,
 		MetricsTok:    cfg.MetricsToken,
 		publicBaseURL: strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
+		llmProxyURL:   strings.TrimSpace(cfg.LLMProxyURL),
+		llmProxyToken: strings.TrimSpace(cfg.LLMProxyToken),
+		llmModel:      strings.TrimSpace(cfg.LLMModel),
 		metrics:       newMusicMetrics(),
 		startedAt:     time.Now(),
 	}
@@ -140,6 +150,9 @@ func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 		api.DELETE("/playlists/:id", p.handleDeletePlaylist)
 		api.POST("/playlists/:id/items", p.handleAddPlaylistItem)
 		api.DELETE("/playlists/:id/items/:track_id", p.handleRemovePlaylistItem)
+
+		// AI 智能歌单 (P3) — dock LLM proxy; 503 when unconfigured.
+		api.POST("/playlists/generate", p.handleGeneratePlaylist)
 	}
 }
 

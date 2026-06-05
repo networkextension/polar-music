@@ -150,6 +150,7 @@ tr:hover .rowact button{opacity:1} .rowact button:hover{background:rgba(0,0,0,.0
     <div class="sechead">歌单 <button id="newPl" title="新建歌单"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M12 5v14M5 12h14"/></svg></button></div>
     <div class="pls" id="pls"></div>
     <button class="cta" id="add"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px;stroke:#fff"><path d="M12 5v14M5 12h14"/></svg>添加音乐</button>
+    <button class="cta ghost" id="aiPl" style="margin-top:6px">✨ AI 智能歌单</button>
   </aside>
   <main class="main" id="main"></main>
 </div>
@@ -233,6 +234,17 @@ async function uploadFiles(files){
 }
 $('add').onclick=()=>$('file').click();
 $('file').onchange=e=>{uploadFiles(e.target.files);e.target.value='';};
+$('aiPl').onclick=async()=>{
+  const pr=prompt('描述你想要的歌单情境 / 心情，例如「周五下午专注工作，偏氛围、器乐」：');
+  if(!pr||!pr.trim())return;
+  toast('AI 正在挑歌…');
+  try{
+    const r=await api('/api/playlists/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:pr.trim()})});
+    const pl=await api('/api/playlists');playlists=pl.playlists||[];renderPls();
+    setView('pl',r.playlist.id);
+    toast('已生成「'+r.playlist.name+'」 '+r.playlist.track_count+' 首');
+  }catch(e){toast('AI 歌单失败：'+e.message);}
+};
 let dragN=0;
 document.addEventListener('dragenter',e=>{e.preventDefault();dragN++;const d=document.querySelector('.drop');if(d)d.classList.add('hot');});
 document.addEventListener('dragover',e=>e.preventDefault());
