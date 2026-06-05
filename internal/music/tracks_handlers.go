@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -182,12 +185,36 @@ func (p *Plugin) handleStreamTrack(c *gin.Context) {
 		notFound(c, "track not found")
 		return
 	}
-	url, err := p.Dock.AssetDownloadURL(t.AudioAssetID)
+	url, err := p.signedAssetURL(t.AudioAssetID, c.GetString("workspace_id"))
 	if err != nil || url == "" {
 		serverErr(c, "could not sign asset url")
 		return
 	}
 	c.Redirect(http.StatusFound, url)
+}
+
+// signedAssetURL mints a short-lived signed provider URL for a workspace
+// asset. We call dock's /download-url directly (not sdk.AssetDownloadURL)
+// because that helper omits workspace_id, so dock's canCallerReadAsset
+// rejects private/tenant assets with 404 — it only works for public assets.
+func (p *Plugin) signedAssetURL(assetID int64, ws string) (string, error) {
+	path := "/internal/v1/assets/" + strconv.FormatInt(assetID, 10) + "/download-url?workspace_id=" + url.QueryEscape(ws)
+	resp, err := p.Dock.Do(http.MethodGet, path, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("download-url HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
 }
 
 // GET /api/tracks/:id/cover  → 302 to signed cover URL, or 404.
@@ -201,7 +228,7 @@ func (p *Plugin) handleTrackCover(c *gin.Context) {
 		notFound(c, "no cover")
 		return
 	}
-	url, err := p.Dock.AssetDownloadURL(*t.CoverAssetID)
+	url, err := p.signedAssetURL(*t.CoverAssetID, c.GetString("workspace_id"))
 	if err != nil || url == "" {
 		serverErr(c, "could not sign cover url")
 		return
