@@ -1,0 +1,10 @@
+# binaries
+/music-svc
+/cmd/music-svc/music-svc
+*.test
+*.out
+
+# local
+.DS_Store
+*.log
+/tmp/
