@@ -112,6 +112,7 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 	r.GET("/healthz", p.handleHealthz)
 	r.GET("/metrics", p.handleMetricsExposition)
+	p.registerUIRoutes(r) // self-contained /music.html (no auth; API calls carry the cookie)
 
 	api := r.Group("/api", p.requireWorkspace())
 	{

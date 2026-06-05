@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polar 乐库</title>
+<!--
+  polar-music P1 — self-contained served UI (no build chain), go:embed'd.
+  Apple-Music styling + player engine carried over from the local starter;
+  data layer rewired to the live P0 REST API:
+    upload   POST /api/tracks (multipart file + client-probed duration_ms)
+    library  GET  /api/tracks   (albums/artists derived client-side)
+    play     <audio src="/api/tracks/:id/stream">  → 302 signed URL, Range/seek
+    cover    /api/tracks/:id/cover  (302 signed)
+    fav/pl   /api/favorites/:id, /api/playlists*
+  Auth: dock session cookie (parent .4950.store domain). ?ws=<id> overrides
+  the active workspace for JSON calls; media <audio>/<img> use the session's
+  active workspace (tags can't send X-Workspace-Id).
+-->
+<style>
+:root{
+  --bg:#fff; --sidebar-bg:rgba(245,245,247,.6); --hairline:rgba(0,0,0,.07);
+  --text-primary:rgba(0,0,0,.88); --text-secondary:rgba(0,0,0,.56); --text-tertiary:rgba(0,0,0,.34);
+  --accent:#d60017; --row-hover:rgba(0,0,0,.04); --art-grad:linear-gradient(135deg,#c9c9cf,#e8e8ed);
+  --font:-apple-system,system-ui,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font);font-size:13px;color:var(--text-primary);background:var(--bg);overflow:hidden}
+button{font-family:inherit;cursor:pointer}
+.icon{width:18px;height:18px;display:inline-block;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.hidden{display:none!important}
+.app{display:grid;grid-template-columns:244px 1fr;height:100vh;padding-bottom:92px}
+.sidebar{background:var(--sidebar-bg);border-right:.5px solid var(--hairline);padding:18px 12px;backdrop-filter:blur(20px);display:flex;flex-direction:column;overflow:hidden}
+.logo{font-size:21px;font-weight:700;margin:4px 12px 14px;display:flex;align-items:center;gap:7px;color:var(--accent)}
+.logo svg{width:22px;height:22px;fill:var(--accent)}
+.searchbox{position:relative;margin:0 6px 12px}
+.searchbox input{width:100%;background:rgba(0,0,0,.05);border:none;border-radius:8px;padding:7px 10px 7px 30px;font-size:13px;outline:none;color:var(--text-primary)}
+.searchbox svg{position:absolute;left:9px;top:8px;color:var(--text-secondary)}
+.nav a{display:flex;align-items:center;gap:11px;padding:8px 12px;border-radius:8px;color:var(--text-primary);text-decoration:none;font-weight:500}
+.nav a:hover{background:var(--row-hover)}
+.nav a.active{color:var(--accent)} .nav a.active svg{color:var(--accent)} .nav a svg{color:var(--text-secondary)}
+.nav a .ct{margin-left:auto;color:var(--text-tertiary);font-size:11px;font-weight:400}
+.sechead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text-tertiary);padding:14px 12px 6px;display:flex;align-items:center}
+.sechead button{margin-left:auto;background:none;border:none;color:var(--text-secondary)}
+.pls{overflow:auto;flex:1}
+.pls .pl{display:flex;align-items:center;gap:9px;padding:7px 12px;border-radius:8px;color:var(--text-primary);font-weight:500}
+.pls .pl:hover{background:var(--row-hover)} .pls .pl.active{color:var(--accent)}
+.pls .pl .ct{margin-left:auto;color:var(--text-tertiary);font-size:11px;font-weight:400}
+.cta{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:34px;padding:0 16px;border-radius:1000px;background:var(--accent);color:#fff;border:none;font-weight:600;margin:10px 6px 2px}
+.cta.ghost{background:rgba(0,0,0,.05);color:var(--text-primary)}
+.main{padding:24px 32px 40px;overflow:auto}
+h1.page{font-size:26px;font-weight:700;display:flex;align-items:flex-end;gap:14px}
+h1.page .pcount{font-size:12px;font-weight:400;color:var(--text-secondary);padding-bottom:5px}
+.pageacts{display:flex;gap:8px;margin:14px 0 22px}
+.pillbtn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 16px;border-radius:1000px;background:rgba(0,0,0,.05);border:none;color:var(--accent);font-weight:600;font-size:13px}
+.pillbtn:hover{background:rgba(0,0,0,.08)} .pillbtn.solid{background:var(--accent);color:#fff} .pillbtn.danger{color:var(--accent);margin-left:auto}
+.shelf-head{display:flex;align-items:center;gap:6px;margin:26px 0 14px;font-size:17px;font-weight:700}
+.shelf{display:grid;grid-auto-flow:column;grid-auto-columns:174px;gap:18px;overflow-x:auto;padding-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:20px 18px}
+.card{cursor:pointer}
+.card .art{width:100%;aspect-ratio:1;border-radius:8px;background:var(--art-grad);object-fit:cover;box-shadow:0 1px 4px rgba(0,0,0,.12);position:relative;overflow:hidden;display:grid;place-items:center}
+.shelf .card{width:174px} .shelf .card .art{width:174px;height:174px}
+.card .art img{width:100%;height:100%;object-fit:cover}
+.card .art .ph{color:rgba(255,255,255,.85);width:40px;height:40px}
+.card .art .play{position:absolute;right:9px;bottom:9px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.92);display:grid;place-items:center;color:#000;opacity:0;transform:translateY(6px);transition:.15s;box-shadow:0 3px 10px rgba(0,0,0,.25)}
+.card:hover .art .play{opacity:1;transform:none}
+.card.round .art{border-radius:50%}
+.card .t{margin-top:9px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .s{color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card.round .t,.card.round .s{text-align:center}
+table{width:100%;border-collapse:collapse;margin-top:6px}
+thead th{text-align:left;font-size:12px;font-weight:400;color:var(--text-secondary);padding:8px 12px;border-bottom:.5px solid var(--hairline);position:sticky;top:0;background:var(--bg)}
+thead th.r{text-align:right}
+tbody td{padding:8px 12px;font-size:12px;border-bottom:.5px solid var(--hairline);color:var(--text-secondary)}
+tbody tr{cursor:pointer} tbody tr:hover{background:var(--row-hover)}
+tbody tr.playing td{color:var(--accent)} tbody tr.playing .eq{display:inline-flex}
+.idx{width:34px;text-align:right;color:var(--text-tertiary);font-variant-numeric:tabular-nums}
+.idx .eq{display:none;gap:2px;align-items:flex-end;height:13px;justify-content:center}
+.idx .eq i{width:2.5px;background:var(--accent);animation:eq .8s ease-in-out infinite}
+.idx .eq i:nth-child(2){animation-delay:.2s}.idx .eq i:nth-child(3){animation-delay:.4s}
+@keyframes eq{0%,100%{height:4px}50%{height:13px}}
+tr:hover .idx .num{display:none}
+.song{display:flex;align-items:center;gap:11px}
+.song .thumb{width:38px;height:38px;border-radius:5px;background:var(--art-grad);object-fit:cover;flex:none}
+.song .name{font-size:13px;color:var(--text-primary);font-weight:500} .song .nm2{color:var(--text-secondary);font-size:11px}
+td.col-name{color:var(--text-primary)} td.time{text-align:right;width:62px;font-variant-numeric:tabular-nums}
+td.fav{width:30px;text-align:center;color:var(--text-tertiary)} td.fav.on{color:var(--accent)}
+.rowact{width:40px}.rowact button{opacity:0;background:none;border:none;color:var(--text-secondary);width:26px;height:26px;border-radius:6px}
+tr:hover .rowact button{opacity:1} .rowact button:hover{background:rgba(0,0,0,.07);color:var(--text-primary)}
+.hero{display:flex;gap:22px;align-items:flex-end;margin-bottom:22px}
+.hero .ha{width:184px;height:184px;border-radius:10px;background:var(--art-grad);box-shadow:0 6px 24px rgba(0,0,0,.18);object-fit:cover;flex:none;display:grid;place-items:center;overflow:hidden}
+.hero.round .ha{border-radius:50%} .hero .ha img{width:100%;height:100%;object-fit:cover}
+.hero .hmeta .k{color:var(--accent);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.hero .hmeta h1{font-size:30px;font-weight:800;margin:4px 0} .hero .hmeta .by{color:var(--text-secondary);font-size:15px}
+.empty{height:100%;display:grid;place-items:center;text-align:center}
+.drop{border:2px dashed var(--hairline);border-radius:18px;padding:52px 64px;max-width:520px;transition:.2s}
+.drop.hot{border-color:var(--accent);background:rgba(214,0,23,.04)} .drop svg{color:var(--accent)}
+.drop h2{margin:14px 0 6px;font-size:21px} .drop p{color:var(--text-secondary);margin:3px 0}
+.drop .row{display:flex;gap:10px;justify-content:center;margin-top:18px}
+.player{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);width:min(1000px,calc(100vw - 32px));height:64px;display:flex;align-items:center;gap:18px;padding:0 16px;border-radius:16px;background:rgba(255,255,255,.78);backdrop-filter:blur(28px) saturate(180%);box-shadow:0 6px 30px rgba(0,0,0,.14),0 0 0 .5px var(--hairline);z-index:10}
+.np{display:flex;align-items:center;gap:11px;width:260px;min-width:180px}
+.np .cov{width:46px;height:46px;border-radius:6px;background:var(--art-grad);object-fit:cover;flex:none}
+.np .meta{min-width:0} .np .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np .a{font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np .heart{background:none;border:none;color:var(--text-tertiary);flex:none} .np .heart.on{color:var(--accent)}
+.center{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;max-width:560px;margin:0 auto}
+.transport{display:flex;align-items:center;gap:20px}
+.transport button{background:none;border:none;color:var(--text-primary)} .transport .sm{color:var(--text-secondary)} .transport .sm.on{color:var(--accent)} .transport .pp{width:34px;height:34px}
+.seek{display:flex;align-items:center;gap:9px;width:100%}
+.seek .tm{font-size:11px;color:var(--text-tertiary);width:34px;text-align:center;font-variant-numeric:tabular-nums}
+.bar{flex:1;height:4px;background:rgba(0,0,0,.12);border-radius:3px;position:relative;cursor:pointer}
+.bar .fill{position:absolute;left:0;top:0;bottom:0;background:var(--text-secondary);border-radius:3px;width:0}
+.bar .knob{position:absolute;top:50%;width:11px;height:11px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3);transform:translate(-50%,-50%);left:0;opacity:0;transition:opacity .15s}
+.bar:hover .knob{opacity:1} .bar:hover .fill{background:var(--accent)}
+.right{width:200px;display:flex;align-items:center;justify-content:flex-end;gap:12px}
+.vol{display:flex;align-items:center;gap:8px;width:120px;color:var(--text-secondary)} .vol .bar{height:4px}
+.right .qbtn{background:none;border:none;color:var(--text-secondary)} .right .qbtn.on{color:var(--accent)}
+.queue{position:fixed;right:16px;bottom:92px;max-height:60vh;width:320px;background:rgba(255,255,255,.96);backdrop-filter:blur(24px);border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.2),0 0 0 .5px var(--hairline);transform:translateY(20px) scale(.98);opacity:0;pointer-events:none;transition:.18s;z-index:11;display:flex;flex-direction:column;overflow:hidden}
+.queue.open{transform:none;opacity:1;pointer-events:auto}
+.queue h3{padding:14px 16px;font-size:14px;border-bottom:.5px solid var(--hairline);display:flex;align-items:center}
+.queue h3 .x{margin-left:auto;background:none;border:none;color:var(--text-secondary)}
+.qlist{overflow:auto;padding:6px}
+.qitem{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:8px;cursor:pointer}
+.qitem:hover{background:var(--row-hover)} .qitem.on{color:var(--accent)}
+.qitem img{width:34px;height:34px;border-radius:5px;object-fit:cover;background:var(--art-grad);flex:none}
+.qitem .qt{min-width:0;flex:1}.qitem .qt div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.qitem .qt .a{color:var(--text-secondary);font-size:11px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.3);display:grid;place-items:center;z-index:30}
+.modal .box{background:#fff;border-radius:14px;padding:20px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.modal h3{margin-bottom:12px}.modal .o{padding:9px 12px;border-radius:8px;cursor:pointer}.modal .o:hover{background:var(--row-hover)}.modal .row{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:rgba(40,40,42,.96);color:#fff;padding:9px 18px;border-radius:20px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.3);opacity:0;pointer-events:none;transition:.2s;z-index:40}
+.toast.show{opacity:1}
+.up{position:fixed;right:16px;top:16px;background:#fff;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18),0 0 0 .5px var(--hairline);padding:10px 14px;font-size:12px;color:var(--text-secondary);opacity:0;transition:.2s;z-index:20}
+.up.show{opacity:1}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:rgba(0,0,0,.18);border-radius:5px;border:2px solid transparent;background-clip:content-box}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm3 6v6.2a2.3 2.3 0 11-1.2-2V9.4l-3.6.9V16a2.3 2.3 0 11-1.2-2V7.5L15 6z"/></svg>乐库</div>
+    <div class="searchbox"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="q" placeholder="搜索曲目 · 艺人 · 专辑"></div>
+    <nav class="nav">
+      <a data-view="home" class="active"><svg class="icon" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z"/></svg>主页</a>
+      <a data-view="songs"><svg class="icon" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>歌曲<span class="ct" id="ctSongs">0</span></a>
+      <a data-view="albums"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.4"/></svg>专辑<span class="ct" id="ctAlbums">0</span></a>
+      <a data-view="artists"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>艺人<span class="ct" id="ctArtists">0</span></a>
+      <a data-view="fav"><svg class="icon" viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg>收藏<span class="ct" id="ctFav">0</span></a>
+    </nav>
+    <div class="sechead">歌单 <button id="newPl" title="新建歌单"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M12 5v14M5 12h14"/></svg></button></div>
+    <div class="pls" id="pls"></div>
+    <button class="cta" id="add"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px;stroke:#fff"><path d="M12 5v14M5 12h14"/></svg>添加音乐</button>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<div class="player">
+  <div class="np"><img class="cov" id="npCover" alt=""><div class="meta"><div class="t" id="npTitle">未在播放</div><div class="a" id="npArtist">点「添加音乐」或拖拽文件</div></div>
+    <button class="heart" id="npFav" title="收藏"><svg class="icon" viewBox="0 0 24 24" style="width:17px;height:17px"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg></button></div>
+  <div class="center"><div class="transport">
+    <button class="sm" id="shuffle" title="随机"><svg class="icon" viewBox="0 0 24 24" style="width:17px;height:17px"><path d="M16 3h5v5M4 20l17-17M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg></button>
+    <button id="prev"><svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:currentColor"><path d="M7 6v12M9 12l9 7V5z"/></svg></button>
+    <button class="pp" id="pp"><svg class="icon" id="ppIcon" viewBox="0 0 24 24" style="stroke:none;fill:currentColor;width:30px;height:30px"><path d="M8 5v14l11-7z"/></svg></button>
+    <button id="next"><svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:currentColor"><path d="M17 6v12M15 12L6 5v14z"/></svg></button>
+    <button class="sm" id="repeat" title="循环"><svg class="icon" viewBox="0 0 24 24" style="width:17px;height:17px"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg></button>
+  </div><div class="seek"><span class="tm" id="cur">0:00</span><div class="bar" id="seek"><div class="fill" id="seekFill"></div><div class="knob" id="seekKnob"></div></div><span class="tm" id="durt">0:00</span></div></div>
+  <div class="right"><div class="vol"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M11 5L6 9H2v6h4l5 4zM15 9a4 4 0 010 6M18 6a8 8 0 010 12"/></svg><div class="bar" id="vol"><div class="fill" id="volFill" style="width:90%"></div><div class="knob" id="volKnob" style="left:90%"></div></div></div>
+    <button class="qbtn" id="queueBtn" title="播放队列"><svg class="icon" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M3 6h13M3 12h13M3 18h9M17 12v8l5-3z"/></svg></button></div>
+</div>
+
+<div class="queue" id="queue"><h3>播放队列<button class="x" id="queueClose"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M6 6l12 12M18 6L6 18"/></svg></button></h3><div class="qlist" id="qlist"></div></div>
+<div class="toast" id="toast"></div><div class="up" id="up"></div>
+<input type="file" id="file" accept="audio/*,.mp3,.m4a,.flac,.ogg,.wav,.aac" multiple class="hidden">
+<audio id="audio"></audio>
+
+<script>
+"use strict";
+const A=document.getElementById('audio');
+const $=id=>document.getElementById(id);
+const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtMs=ms=>{const s=Math.floor((ms||0)/1000);return s>0?Math.floor(s/60)+':'+String(s%60).padStart(2,'0'):'0:00';};
+const fmt=s=>isFinite(s)&&s>0?Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'):'0:00';
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),2200);}
+
+// ── workspace + api ──
+const WS=new URLSearchParams(location.search).get('ws')||localStorage.getItem('pm.ws')||'';
+if(WS)localStorage.setItem('pm.ws',WS);
+function hdr(extra){const h=Object.assign({},extra||{});if(WS)h['X-Workspace-Id']=WS;return h;}
+async function api(path,opts){opts=opts||{};opts.credentials='include';opts.headers=hdr(opts.headers);
+  const r=await fetch(path,opts);
+  if(r.status===401){throw new Error('未登录或会话过期，请到 zen 登录后回来');}
+  if(!r.ok){let m='';try{m=(await r.json()).error;}catch(e){}throw new Error(m||('HTTP '+r.status));}
+  return r.status===204?null:r.json();}
+
+// media src (tags use cookie→active workspace; can't send X-Workspace-Id)
+const streamSrc=id=>'/api/tracks/'+id+'/stream';
+const coverSrc=t=>t.has_cover?('/api/tracks/'+t.id+'/cover'):'';
+
+// ── state ──
+let lib=[], favset=new Set(), playlists=[], view='home', viewArg=null;
+let queue=[], qpos=-1, shuffle=false, repeat=0;
+const byId=id=>lib.find(t=>t.id===id);
+
+async function loadAll(){
+  try{
+    const [tr,fv,pl]=await Promise.all([
+      api('/api/tracks?limit=500'),
+      api('/api/tracks?fav=1&limit=500').catch(()=>({tracks:[]})),
+      api('/api/playlists').catch(()=>({playlists:[]})),
+    ]);
+    lib=(tr.tracks||[]); favset=new Set((fv.tracks||[]).map(t=>t.id)); playlists=(pl.playlists||[]);
+  }catch(e){ lib=[];favset=new Set();playlists=[]; renderError(e.message); renderPls(); return; }
+  renderPls(); render();
+}
+function renderError(msg){ $('main').innerHTML=`<div class="empty"><div class="drop"><h2>加载失败</h2><p>${esc(msg)}</p><p style="font-size:12px;color:var(--text-tertiary)">先到 zen.4950.store 登录，再回到本页（同账号会话）。</p></div></div>`; }
+
+// ── upload ──
+const AUDIO_RE=/\.(mp3|m4a|flac|ogg|oga|wav|aac|opus)$/i;
+const probeDur=f=>new Promise(res=>{const a=new Audio();a.preload='metadata';const u=URL.createObjectURL(f);a.onloadedmetadata=()=>{res(Math.round((a.duration||0)*1000));URL.revokeObjectURL(u);};a.onerror=()=>{res(0);URL.revokeObjectURL(u);};a.src=u;});
+async function uploadFiles(files){
+  const list=[...files].filter(f=>AUDIO_RE.test(f.name));
+  if(!list.length){toast('没有识别到音频文件');return;}
+  let done=0,fail=0;
+  for(const f of list){
+    $('up').textContent='上传中 '+(done+fail+1)+'/'+list.length+' · '+f.name; $('up').classList.add('show');
+    try{ const dur=await probeDur(f); const fd=new FormData(); fd.append('file',f); fd.append('duration_ms',String(dur));
+      await api('/api/tracks',{method:'POST',body:fd}); done++;
+    }catch(e){ fail++; console.warn('upload failed',f.name,e.message); }
+  }
+  $('up').classList.remove('show');
+  toast('导入完成：成功 '+done+(fail?('，失败 '+fail):''));
+  await loadAll();
+}
+$('add').onclick=()=>$('file').click();
+$('file').onchange=e=>{uploadFiles(e.target.files);e.target.value='';};
+let dragN=0;
+document.addEventListener('dragenter',e=>{e.preventDefault();dragN++;const d=document.querySelector('.drop');if(d)d.classList.add('hot');});
+document.addEventListener('dragover',e=>e.preventDefault());
+document.addEventListener('dragleave',()=>{dragN--;if(dragN<=0){const d=document.querySelector('.drop');if(d)d.classList.remove('hot');}});
+document.addEventListener('drop',async e=>{e.preventDefault();dragN=0;const d=document.querySelector('.drop');if(d)d.classList.remove('hot');
+  const items=[...(e.dataTransfer.items||[])],out=[];
+  const walk=en=>new Promise(res=>{if(en.isFile)en.file(f=>{out.push(f);res();},()=>res());else if(en.isDirectory){const rd=en.createReader();rd.readEntries(async es=>{for(const x of es)await walk(x);res();},()=>res());}else res();});
+  if(items.length&&items[0].webkitGetAsEntry){for(const it of items){const en=it.webkitGetAsEntry&&it.webkitGetAsEntry();if(en)await walk(en);}uploadFiles(out);}else uploadFiles(e.dataTransfer.files);});
+
+// ── derived ──
+function aaOf(t){return t.album_artist||t.artist||'未知艺人';}
+function albums(){const m=new Map();for(const t of lib){const k=t.album+'@@'+aaOf(t);if(!m.has(k))m.set(k,{album:t.album||'未知专辑',artist:aaOf(t),tracks:[]});m.get(k).tracks.push(t);}
+  return [...m.values()].sort((a,b)=>a.artist.localeCompare(b.artist)||a.album.localeCompare(b.album));}
+function artists(){const m=new Map();for(const t of lib){const k=aaOf(t);if(!m.has(k))m.set(k,{name:k,tracks:[],albums:new Set()});const a=m.get(k);a.tracks.push(t);a.albums.add(t.album);}
+  return [...m.values()].sort((a,b)=>a.name.localeCompare(b.name));}
+function sf(arr,f){const q=$('q').value.trim().toLowerCase();if(!q)return arr;return arr.filter(f||(t=>((t.title||'')+' '+(t.artist||'')+' '+(t.album||'')).toLowerCase().includes(q)));}
+function albCover(a){const t=a.tracks.find(x=>x.has_cover);return t?coverSrc(t):'';}
+function counts(){$('ctSongs').textContent=lib.length;$('ctAlbums').textContent=albums().length;$('ctArtists').textContent=artists().length;$('ctFav').textContent=favset.size;}
+
+function setView(v,arg){view=v;viewArg=arg??null;
+  document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.view===v));
+  document.querySelectorAll('.pls .pl').forEach(p=>p.classList.toggle('active',v==='pl'&&p.dataset.pl===String(arg)));
+  render();}
+document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>setView(a.dataset.view));
+$('q').oninput=()=>{if(view!=='songs'&&$('q').value.trim())setView('songs');else render();};
+
+const phArt=`<svg class="icon ph" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
+const artHTML=u=>u?`<img src="${u}" alt="" onerror="this.style.display='none'">`:phArt;
+const playGlyph=`<svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:currentColor;width:16px;height:16px"><path d="M8 5v14l11-7z"/></svg>`;
+const sortTrk=(a,b)=>aaOf(a).localeCompare(aaOf(b))||(a.album||'').localeCompare(b.album||'')||(a.track_no-b.track_no);
+
+function render(){
+  counts();const m=$('main');
+  if(!lib.length){m.innerHTML=`<div class="empty"><div class="drop">
+    <svg class="icon" viewBox="0 0 24 24" style="width:44px;height:44px"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+    <h2>把音乐拖进来</h2><p>支持 mp3 / m4a / flac / ogg / wav，自动解析标题·艺人·专辑·封面</p>
+    <p style="font-size:12px;color:var(--text-tertiary)">私有存储：文件进 polar-assets，工作区隔离</p>
+    <div class="row"><button class="pillbtn solid" onclick="document.getElementById('file').click()">选择文件</button></div></div></div>`;return;}
+  if(view==='home')return renderHome();
+  if(view==='songs')return renderTracks(sf(lib.slice().sort(sortTrk)),{title:'歌曲',count:lib.length+' 首'});
+  if(view==='fav')return renderTracks(sf(lib.filter(t=>favset.has(t.id))),{title:'收藏',count:'♥ '+favset.size+' 首'});
+  if(view==='albums')return renderCards(sf(albums(),a=>(a.album+' '+a.artist).toLowerCase().includes($('q').value.toLowerCase())),'专辑','album');
+  if(view==='artists')return renderCards(sf(artists(),a=>a.name.toLowerCase().includes($('q').value.toLowerCase())),'艺人','artist');
+  if(view==='album'){const a=albums().find(x=>x.album===viewArg.album&&x.artist===viewArg.artist)||{tracks:[]};return renderTracks(a.tracks.slice().sort((x,y)=>x.track_no-y.track_no),{title:viewArg.album,kind:'专辑',by:viewArg.artist,cover:albCover(a)});}
+  if(view==='artist'){const a=artists().find(x=>x.name===viewArg)||{tracks:[]};return renderTracks(a.tracks.slice().sort(sortTrk),{title:viewArg,kind:'艺人',by:a.tracks.length+' 首 · '+a.albums.size+' 张专辑',cover:albCover({tracks:a.tracks}),round:true});}
+  if(view==='pl'){const pl=playlists.find(p=>p.id===viewArg);if(!pl)return setView('home');loadPlaylist(pl);return;}
+}
+function renderHome(){
+  const recent=lib.slice().sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||''));
+  const recentAlbums=albums().slice(0,12);
+  let h=`<h1 class="page">主页</h1><div class="pageacts"><button class="pillbtn solid" id="playAll">${playGlyph} 播放全部</button><button class="pillbtn" id="shufAll">随机播放</button></div>
+    <div class="shelf-head">最近添加</div><div class="shelf">`+recentAlbums.map((a,i)=>cardHTML(a,'album',i)).join('')+`</div>
+    <div class="shelf-head">最近导入的歌曲</div><table><thead><tr><th class="idx">#</th><th>标题</th><th>专辑</th><th></th><th class="r">时长</th></tr></thead><tbody id="tb"></tbody></table>`;
+  $('main').innerHTML=h; fillRows(recent.slice(0,8));
+  $('playAll').onclick=()=>playList(lib.map(t=>t.id),0);
+  $('shufAll').onclick=()=>{if(!shuffle)toggleShuffle();playList(lib.map(t=>t.id),Math.floor(Math.random()*lib.length));};
+  bindCards(recentAlbums,'album');
+}
+function cardHTML(a,type,i){const round=type==='artist';const cov=type==='artist'?albCover({tracks:a.tracks}):albCover(a);
+  return `<div class="card ${round?'round':''}" data-i="${i}"><div class="art">${artHTML(cov)}${type!=='artist'?`<div class="play">${playGlyph}</div>`:''}</div>
+    <div class="t">${esc(type==='artist'?a.name:a.album)}</div><div class="s">${esc(type==='artist'?a.tracks.length+' 首':a.artist)}</div></div>`;}
+let _cd=null,_ct=null;
+function renderCards(data,title,type){$('main').innerHTML=`<h1 class="page">${title} <span class="pcount">${data.length}</span></h1><div class="grid">`+data.map((a,i)=>cardHTML(a,type,i)).join('')+`</div>`;bindCards(data,type);}
+function bindCards(data,type){_cd=data;_ct=type;document.querySelectorAll('.card').forEach(c=>{const a=_cd[+c.dataset.i];if(!a)return;
+  c.onclick=()=>_ct==='artist'?setView('artist',a.name):setView('album',{album:a.album,artist:a.artist});
+  const pb=c.querySelector('.play');if(pb)pb.onclick=e=>{e.stopPropagation();playList(a.tracks.map(x=>x.id),0);};});}
+function renderTracks(ts,h){
+  const hero=h.cover!==undefined||h.kind?`<div class="hero ${h.round?'round':''}"><div class="ha">${artHTML(h.cover)}</div><div class="hmeta"><div class="k">${esc(h.kind||'')}</div><h1>${esc(h.title)}</h1><div class="by">${esc(h.by||'')}</div>
+    <div class="pageacts" style="margin:16px 0 0"><button class="pillbtn solid" id="playAll">${playGlyph} 播放</button><button class="pillbtn" id="shufAll">随机</button>${h.pl?`<button class="pillbtn danger" id="delPl">删除歌单</button>`:''}</div></div></div>`
+   :`<h1 class="page">${esc(h.title)} <span class="pcount">${esc(h.count||'')}</span></h1><div class="pageacts"><button class="pillbtn solid" id="playAll">${playGlyph} 播放全部</button><button class="pillbtn" id="shufAll">随机播放</button></div>`;
+  $('main').innerHTML=hero+`<table><thead><tr><th class="idx">#</th><th>标题</th><th>专辑</th><th></th><th class="r">时长</th></tr></thead><tbody id="tb"></tbody></table>`;
+  fillRows(ts);const ids=ts.map(t=>t.id);
+  if($('playAll'))$('playAll').onclick=()=>playList(ids,0);
+  if($('shufAll'))$('shufAll').onclick=()=>{if(!shuffle)toggleShuffle();playList(ids,Math.floor(Math.random()*ids.length));};
+  if($('delPl'))$('delPl').onclick=()=>delPlaylist(h.pl);
+}
+function fillRows(ts){const tb=$('tb');const ids=ts.map(t=>t.id);
+  tb.innerHTML=ts.map((t,i)=>`<tr data-id="${t.id}" class="${queue[qpos]===t.id?'playing':''}">
+    <td class="idx"><span class="num">${i+1}</span><span class="eq"><i></i><i></i><i></i></span></td>
+    <td class="col-name"><div class="song"><img class="thumb" src="${coverSrc(t)}" onerror="this.style.visibility='hidden'"><div><div class="name">${esc(t.title)}</div><div class="nm2">${esc(t.artist)}</div></div></div></td>
+    <td>${esc(t.album)}</td>
+    <td class="fav ${favset.has(t.id)?'on':''}" data-fav><svg class="icon" viewBox="0 0 24 24" style="width:15px;height:15px;${favset.has(t.id)?'fill:currentColor':''}"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg></td>
+    <td class="time">${fmtMs(t.duration_ms)}</td>
+    <td class="rowact"><button data-add title="加入歌单"><svg class="icon" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M12 5v14M5 12h14"/></svg></button></td></tr>`).join('');
+  tb.querySelectorAll('tr').forEach((tr,i)=>{const id=tr.dataset.id,t=byId(id)||ts.find(x=>x.id===id);
+    tr.querySelector('.col-name').onclick=()=>playList(ids,i);tr.querySelector('.idx').onclick=()=>playList(ids,i);
+    tr.querySelector('[data-fav]').onclick=e=>{e.stopPropagation();toggleFav(id);};
+    tr.querySelector('[data-add]').onclick=e=>{e.stopPropagation();addToPlaylist(id);};});
+}
+
+// ── playback (stream via /api/tracks/:id/stream → 302 signed, Range/seek) ──
+function trackById(id){return lib.find(t=>t.id===id)||(_plTracks&&_plTracks.find(t=>t.id===id));}
+function playList(ids,i){queue=ids.slice();qpos=i;playCurrent();}
+function playCurrent(){const t=trackById(queue[qpos]);if(!t)return;
+  A.src=streamSrc(t.id);A.play().catch(()=>{});
+  $('npCover').src=coverSrc(t)||'';$('npCover').style.visibility=t.has_cover?'visible':'hidden';
+  $('npTitle').textContent=t.title;$('npArtist').textContent=(t.artist||'')+' — '+(t.album||'');
+  syncFav(t.id);document.querySelectorAll('tbody tr').forEach(tr=>tr.classList.toggle('playing',tr.dataset.id===queue[qpos]));
+  renderQueue();document.title='▶ '+t.title;}
+$('pp').onclick=()=>{if(!queue.length){if(lib.length)playList(lib.map(t=>t.id),0);return;}A.paused?A.play():A.pause();};
+A.onplay=()=>$('ppIcon').setAttribute('d','M7 5h3.5v14H7zM13.5 5H17v14h-3.5z');
+A.onpause=()=>$('ppIcon').setAttribute('d','M8 5v14l11-7z');
+A.onended=()=>next(true);
+function next(auto){if(!queue.length)return;if(repeat===2&&auto){A.currentTime=0;A.play();return;}
+  if(shuffle)qpos=Math.floor(Math.random()*queue.length);else qpos++;
+  if(qpos>=queue.length){if(repeat===1)qpos=0;else{qpos=queue.length-1;A.pause();return;}}playCurrent();}
+function prev(){if(A.currentTime>3){A.currentTime=0;return;}if(qpos>0){qpos--;playCurrent();}else A.currentTime=0;}
+$('next').onclick=()=>next(false);$('prev').onclick=prev;
+function toggleShuffle(){shuffle=!shuffle;$('shuffle').classList.toggle('on',shuffle);}
+$('shuffle').onclick=()=>{toggleShuffle();toast('随机 '+(shuffle?'开':'关'));};
+$('repeat').onclick=()=>{repeat=(repeat+1)%3;$('repeat').classList.toggle('on',repeat>0);toast(['循环关闭','列表循环','单曲循环'][repeat]);};
+A.ontimeupdate=()=>{if(!A.duration)return;const p=A.currentTime/A.duration*100;$('seekFill').style.width=p+'%';$('seekKnob').style.left=p+'%';$('cur').textContent=fmt(A.currentTime);$('durt').textContent=fmt(A.duration);};
+function barSeek(bar,e,cb){const r=bar.getBoundingClientRect();let p=(e.clientX-r.left)/r.width;p=Math.max(0,Math.min(1,p));cb(p);}
+$('seek').onclick=e=>barSeek($('seek'),e,p=>{if(A.duration)A.currentTime=p*A.duration;});
+let seeking=false;$('seek').onmousedown=()=>seeking=true;document.addEventListener('mousemove',e=>{if(seeking&&A.duration)barSeek($('seek'),e,p=>A.currentTime=p*A.duration);});document.addEventListener('mouseup',()=>seeking=false);
+A.volume=0.9;$('vol').onclick=e=>barSeek($('vol'),e,p=>{A.volume=p;$('volFill').style.width=p*100+'%';$('volKnob').style.left=p*100+'%';});
+
+// ── favorites ──
+async function toggleFav(id){const on=favset.has(id);
+  try{ if(on){favset.delete(id);await api('/api/favorites/'+id,{method:'DELETE'});}else{favset.add(id);await api('/api/favorites/'+id,{method:'POST'});} }
+  catch(e){ on?favset.add(id):favset.delete(id); toast(e.message); }
+  render();if(queue[qpos]===id)syncFav(id);}
+function syncFav(id){const on=favset.has(id);const b=$('npFav');b.classList.toggle('on',on);b.querySelector('path').setAttribute('style',on?'fill:currentColor':'');}
+$('npFav').onclick=()=>{if(queue[qpos])toggleFav(queue[qpos]);};
+
+// ── playlists ──
+function renderPls(){$('pls').innerHTML=playlists.map(p=>`<div class="pl ${view==='pl'&&viewArg===p.id?'active':''}" data-pl="${p.id}"><svg class="icon" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M3 6h13M3 12h13M3 18h9M17 12v8l5-3z"/></svg><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</span><span class="ct">${p.track_count||0}</span></div>`).join('')||`<div style="color:var(--text-tertiary);font-size:12px;padding:6px 12px">还没有歌单</div>`;
+  $('pls').querySelectorAll('.pl').forEach(el=>el.onclick=()=>setView('pl',el.dataset.pl));}
+$('newPl').onclick=async()=>{const n=prompt('新建歌单名称：','我的歌单 '+(playlists.length+1));if(!n)return;try{await api('/api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n.trim()})});const pl=await api('/api/playlists');playlists=pl.playlists||[];renderPls();}catch(e){toast(e.message);}};
+let _plTracks=null;
+async function loadPlaylist(pl){try{const r=await api('/api/playlists/'+pl.id);_plTracks=r.playlist.tracks||[];renderTracks(_plTracks,{title:pl.name,kind:'歌单',by:_plTracks.length+' 首',pl:pl});}catch(e){renderError(e.message);}}
+async function delPlaylist(pl){if(!confirm('删除歌单「'+pl.name+'」？'))return;try{await api('/api/playlists/'+pl.id,{method:'DELETE'});playlists=playlists.filter(p=>p.id!==pl.id);renderPls();setView('home');}catch(e){toast(e.message);}}
+async function addToPlaylist(tid){
+  if(!playlists.length){if(confirm('还没有歌单，现在新建？')){const n=prompt('歌单名称：','我的歌单 1');if(n){try{const r=await api('/api/playlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n.trim()})});await api('/api/playlists/'+r.playlist.id+'/items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:tid})});const pl=await api('/api/playlists');playlists=pl.playlists||[];renderPls();toast('已创建并加入');}catch(e){toast(e.message);}}}return;}
+  const w=document.createElement('div');w.className='modal';
+  w.innerHTML=`<div class="box"><h3>加入歌单</h3>${playlists.map(p=>`<div class="o" data-id="${p.id}">${esc(p.name)} <span style="color:var(--text-tertiary);font-size:12px">· ${p.track_count||0}首</span></div>`).join('')}<div class="row"><button class="pillbtn" id="mc">取消</button></div></div>`;
+  document.body.appendChild(w);w.querySelector('#mc').onclick=()=>w.remove();w.onclick=e=>{if(e.target===w)w.remove();};
+  w.querySelectorAll('.o').forEach(o=>o.onclick=async()=>{try{await api('/api/playlists/'+o.dataset.id+'/items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_id:tid})});const pl=await api('/api/playlists');playlists=pl.playlists||[];renderPls();toast('已加入');}catch(e){toast(e.message);}w.remove();});}
+
+// ── queue ──
+$('queueBtn').onclick=()=>{$('queue').classList.toggle('open');$('queueBtn').classList.toggle('on',$('queue').classList.contains('open'));};
+$('queueClose').onclick=()=>{$('queue').classList.remove('open');$('queueBtn').classList.remove('on');};
+function renderQueue(){$('qlist').innerHTML=queue.map((id,i)=>{const t=trackById(id);if(!t)return'';return `<div class="qitem ${i===qpos?'on':''}" data-i="${i}"><img src="${coverSrc(t)}" onerror="this.style.visibility='hidden'"><div class="qt"><div>${esc(t.title)}</div><div class="a">${esc(t.artist)}</div></div><span style="color:var(--text-tertiary);font-size:11px">${fmtMs(t.duration_ms)}</span></div>`;}).join('')||`<div style="color:var(--text-tertiary);padding:18px;text-align:center">队列为空</div>`;
+  $('qlist').querySelectorAll('.qitem').forEach(el=>el.onclick=()=>{qpos=+el.dataset.i;playCurrent();});}
+
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.code==='Space'){e.preventDefault();$('pp').click();}else if(e.code==='ArrowRight'&&e.shiftKey)next(false);else if(e.code==='ArrowLeft'&&e.shiftKey)prev();});
+
+loadAll();
+</script>
+</body>
+</html>
