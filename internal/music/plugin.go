@@ -35,6 +35,13 @@ type Plugin struct {
 
 	publicBaseURL string // POLAR_MUSIC_PUBLIC_BASE_URL — for the /api/nav sidebar link
 
+	// publicWorkspaceID — POLAR_MUSIC_PUBLIC_WORKSPACE_ID. When set, the
+	// library READ endpoints (list/detail/stream/cover/albums/artists) are
+	// served without login against this workspace, so anyone can browse +
+	// play. Empty = library stays fully private (default). Writes (upload,
+	// favorites, playlists) always require login regardless.
+	publicWorkspaceID string
+
 	llmProxyURL   string // dock LLM proxy (OpenAI-compatible) for AI 智能歌单
 	llmProxyToken string
 	llmModel      string
@@ -44,17 +51,18 @@ type Plugin struct {
 }
 
 type Config struct {
-	DBDSN         string
-	DockBase      string
-	PluginName    string
-	PluginToken   string
-	Listen        string
-	BuildVersion  string
-	MetricsToken  string
-	PublicBaseURL string
-	LLMProxyURL   string
-	LLMProxyToken string
-	LLMModel      string
+	DBDSN             string
+	DockBase          string
+	PluginName        string
+	PluginToken       string
+	Listen            string
+	BuildVersion      string
+	MetricsToken      string
+	PublicBaseURL     string
+	PublicWorkspaceID string
+	LLMProxyURL       string
+	LLMProxyToken     string
+	LLMModel          string
 }
 
 func New(ctx context.Context, cfg Config) (*Plugin, error) {
@@ -99,18 +107,19 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 	}
 
 	p := &Plugin{
-		DB:            db,
-		Dock:          dock,
-		Name:          cfg.PluginName,
-		Listen:        cfg.Listen,
-		Ver:           cfg.BuildVersion,
-		MetricsTok:    cfg.MetricsToken,
-		publicBaseURL: strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
-		llmProxyURL:   strings.TrimSpace(cfg.LLMProxyURL),
-		llmProxyToken: strings.TrimSpace(cfg.LLMProxyToken),
-		llmModel:      strings.TrimSpace(cfg.LLMModel),
-		metrics:       newMusicMetrics(),
-		startedAt:     time.Now(),
+		DB:                db,
+		Dock:              dock,
+		Name:              cfg.PluginName,
+		Listen:            cfg.Listen,
+		Ver:               cfg.BuildVersion,
+		MetricsTok:        cfg.MetricsToken,
+		publicBaseURL:     strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
+		publicWorkspaceID: strings.TrimSpace(cfg.PublicWorkspaceID),
+		llmProxyURL:       strings.TrimSpace(cfg.LLMProxyURL),
+		llmProxyToken:     strings.TrimSpace(cfg.LLMProxyToken),
+		llmModel:          strings.TrimSpace(cfg.LLMModel),
+		metrics:           newMusicMetrics(),
+		startedAt:         time.Now(),
 	}
 	if err := p.ensureSchema(ctx); err != nil {
 		_ = db.Close()
@@ -124,35 +133,39 @@ func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 	r.GET("/metrics", p.handleMetricsExposition)
 	p.registerUIRoutes(r) // self-contained /music.html (no auth; API calls carry the cookie)
 
-	api := r.Group("/api", p.requireWorkspace())
+	api := r.Group("/api")
+	pub := p.optionalWorkspace() // library READ — public when POLAR_MUSIC_PUBLIC_WORKSPACE_ID set, else login
+	auth := p.requireWorkspace() // everything that writes / is user-specific — always login
 	{
-		// Tracks — upload → assets, list/detail, stream (signed 302), cover, delete.
-		api.POST("/tracks", p.handleUploadTrack)
-		api.GET("/tracks", p.handleListTracks)
-		api.GET("/tracks/:id", p.handleGetTrack)
-		api.GET("/tracks/:id/stream", p.handleStreamTrack)
-		api.GET("/tracks/:id/cover", p.handleTrackCover)
-		api.DELETE("/tracks/:id", p.handleDeleteTrack)
+		// Library READ — browseable + playable without login when a public
+		// workspace is configured. The 302 stream signs the public workspace's
+		// asset, so playback works for anonymous visitors too.
+		api.GET("/tracks", pub, p.handleListTracks)
+		api.GET("/tracks/:id", pub, p.handleGetTrack)
+		api.GET("/tracks/:id/stream", pub, p.handleStreamTrack)
+		api.GET("/tracks/:id/cover", pub, p.handleTrackCover)
+		api.GET("/albums", pub, p.handleListAlbums)
+		api.GET("/artists", pub, p.handleListArtists)
 
-		// Library — albums / artists derived from track metadata.
-		api.GET("/albums", p.handleListAlbums)
-		api.GET("/artists", p.handleListArtists)
+		// Tracks — upload + delete (login required).
+		api.POST("/tracks", auth, p.handleUploadTrack)
+		api.DELETE("/tracks/:id", auth, p.handleDeleteTrack)
 
-		// Favorites.
-		api.POST("/favorites/:track_id", p.handleAddFavorite)
-		api.DELETE("/favorites/:track_id", p.handleRemoveFavorite)
+		// Favorites (user-specific → login).
+		api.POST("/favorites/:track_id", auth, p.handleAddFavorite)
+		api.DELETE("/favorites/:track_id", auth, p.handleRemoveFavorite)
 
-		// Playlists.
-		api.GET("/playlists", p.handleListPlaylists)
-		api.POST("/playlists", p.handleCreatePlaylist)
-		api.GET("/playlists/:id", p.handleGetPlaylist)
-		api.PATCH("/playlists/:id", p.handleUpdatePlaylist)
-		api.DELETE("/playlists/:id", p.handleDeletePlaylist)
-		api.POST("/playlists/:id/items", p.handleAddPlaylistItem)
-		api.DELETE("/playlists/:id/items/:track_id", p.handleRemovePlaylistItem)
+		// Playlists — creating/editing requires login ("创建播放列表需要登陆").
+		api.GET("/playlists", auth, p.handleListPlaylists)
+		api.POST("/playlists", auth, p.handleCreatePlaylist)
+		api.GET("/playlists/:id", auth, p.handleGetPlaylist)
+		api.PATCH("/playlists/:id", auth, p.handleUpdatePlaylist)
+		api.DELETE("/playlists/:id", auth, p.handleDeletePlaylist)
+		api.POST("/playlists/:id/items", auth, p.handleAddPlaylistItem)
+		api.DELETE("/playlists/:id/items/:track_id", auth, p.handleRemovePlaylistItem)
 
 		// AI 智能歌单 (P3) — dock LLM proxy; 503 when unconfigured.
-		api.POST("/playlists/generate", p.handleGeneratePlaylist)
+		api.POST("/playlists/generate", auth, p.handleGeneratePlaylist)
 	}
 }
 
