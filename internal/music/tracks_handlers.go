@@ -108,7 +108,23 @@ func (p *Plugin) handleUploadTrack(c *gin.Context) {
 		}
 	}
 
+	// Server-side preprocess: duration / codec / bitrate straight from the
+	// audio bytes so the API always exposes them regardless of how the file
+	// arrived (browser upload, script, etc.). The client-probed duration_ms
+	// is only a fallback. Pure-Go — see audiometa.go.
 	durMs, _ := strconv.ParseInt(strings.TrimSpace(c.PostForm("duration_ms")), 10, 64)
+	var probedCodec string
+	var probedBitrate int
+	if af, err := os.Open(tmpPath); err == nil {
+		if st, serr := af.Stat(); serr == nil {
+			pr := probeAudio(af, st.Size())
+			if pr.DurationMs > 0 {
+				durMs = pr.DurationMs
+			}
+			probedCodec, probedBitrate = pr.Codec, pr.Bitrate
+		}
+		af.Close()
+	}
 
 	t := &Track{
 		ID:           musicID("trk"),
@@ -122,6 +138,8 @@ func (p *Plugin) handleUploadTrack(c *gin.Context) {
 		Year:         meta.Year,
 		Genre:        meta.Genre,
 		DurationMs:   durMs,
+		Codec:        probedCodec,
+		Bitrate:      probedBitrate,
 		SizeBytes:    fh.Size,
 		SHA256:       sha,
 		Mime:         mimeType,

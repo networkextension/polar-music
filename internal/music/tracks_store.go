@@ -10,29 +10,29 @@ import (
 // Track is the metadata row. Audio + cover bytes live in polar-assets;
 // AudioAssetID / CoverAssetID reference them.
 type Track struct {
-	ID           string  `json:"id"`
-	WorkspaceID  string  `json:"workspace_id"`
-	UploadedBy   string  `json:"uploaded_by"`
-	Title        string  `json:"title"`
-	Artist       string  `json:"artist"`
-	AlbumArtist  string  `json:"album_artist"`
-	Album        string  `json:"album"`
-	TrackNo      int     `json:"track_no"`
-	DiscNo       int     `json:"disc_no"`
-	Year         string  `json:"year"`
-	Genre        string  `json:"genre"`
-	DurationMs   int64   `json:"duration_ms"`
-	Codec        string  `json:"codec"`
-	Bitrate      int     `json:"bitrate"`
-	SizeBytes    int64   `json:"size_bytes"`
-	SHA256       string  `json:"sha256"`
-	Mime         string  `json:"mime"`
-	SourceName   string  `json:"source_filename"`
-	AudioAssetID int64   `json:"audio_asset_id"`
-	CoverAssetID *int64  `json:"cover_asset_id,omitempty"`
-	HasCover     bool    `json:"has_cover"`
-	CreatedAt    string  `json:"created_at"`
-	Favorited    bool    `json:"favorited,omitempty"`
+	ID           string `json:"id"`
+	WorkspaceID  string `json:"workspace_id"`
+	UploadedBy   string `json:"uploaded_by"`
+	Title        string `json:"title"`
+	Artist       string `json:"artist"`
+	AlbumArtist  string `json:"album_artist"`
+	Album        string `json:"album"`
+	TrackNo      int    `json:"track_no"`
+	DiscNo       int    `json:"disc_no"`
+	Year         string `json:"year"`
+	Genre        string `json:"genre"`
+	DurationMs   int64  `json:"duration_ms"`
+	Codec        string `json:"codec"`
+	Bitrate      int    `json:"bitrate"`
+	SizeBytes    int64  `json:"size_bytes"`
+	SHA256       string `json:"sha256"`
+	Mime         string `json:"mime"`
+	SourceName   string `json:"source_filename"`
+	AudioAssetID int64  `json:"audio_asset_id"`
+	CoverAssetID *int64 `json:"cover_asset_id,omitempty"`
+	HasCover     bool   `json:"has_cover"`
+	CreatedAt    string `json:"created_at"`
+	Favorited    bool   `json:"favorited,omitempty"`
 }
 
 const trackCols = `id, workspace_id, uploaded_by, title, artist, album_artist, album,
@@ -152,6 +152,39 @@ func (p *Plugin) listTracks(ctx context.Context, ws string, f trackFilter) ([]Tr
 	return out, total, rows.Err()
 }
 
+// listZeroDurationTracks returns tracks (any workspace) whose duration hasn't
+// been computed yet — drives the one-shot backfill worker.
+func (p *Plugin) listZeroDurationTracks(ctx context.Context, limit int) ([]Track, error) {
+	rows, err := p.DB.QueryContext(ctx,
+		`SELECT `+trackCols+` FROM tracks WHERE duration_ms = 0 ORDER BY created_at LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Track{}
+	for rows.Next() {
+		t, err := scanTrack(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
+// updateTrackAudioMeta writes server-probed duration (and codec/bitrate when
+// known) onto an existing row. duration_ms is set unconditionally; codec and
+// bitrate only overwrite when the probe produced a value.
+func (p *Plugin) updateTrackAudioMeta(ctx context.Context, id string, durMs int64, codec string, bitrate int) error {
+	_, err := p.DB.ExecContext(ctx, `
+		UPDATE tracks SET
+			duration_ms = $2,
+			codec   = COALESCE(NULLIF($3,''), codec),
+			bitrate = CASE WHEN $4 > 0 THEN $4 ELSE bitrate END
+		WHERE id = $1`, id, durMs, codec, bitrate)
+	return err
+}
+
 func (p *Plugin) deleteTrack(ctx context.Context, ws, id string) (*Track, error) {
 	t, err := p.getTrack(ctx, ws, id)
 	if err != nil || t == nil {
@@ -168,10 +201,10 @@ func (p *Plugin) deleteTrack(ctx context.Context, ws, id string) (*Track, error)
 // ── derived album / artist summaries ──────────────────────────────────
 
 type AlbumSummary struct {
-	Album       string `json:"album"`
-	AlbumArtist string `json:"album_artist"`
+	Album        string `json:"album"`
+	AlbumArtist  string `json:"album_artist"`
 	CoverAssetID *int64 `json:"cover_asset_id,omitempty"`
-	TrackCount  int    `json:"track_count"`
+	TrackCount   int    `json:"track_count"`
 }
 
 func (p *Plugin) listAlbums(ctx context.Context, ws string) ([]AlbumSummary, error) {

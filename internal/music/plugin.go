@@ -177,6 +177,7 @@ func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 
 func (p *Plugin) Start(ctx context.Context) {
 	go p.heartbeatLoop(ctx)
+	go p.backfillDurations(ctx) // one-shot: fill duration for pre-probe imports
 }
 
 func (p *Plugin) Close() error {
