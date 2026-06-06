@@ -7,6 +7,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// cors lets other web apps (e.g. the 灵珠/lzhu music web UI) embed the public
+// library from their own origin. It echoes the request Origin (so both
+// anonymous and cookie-credentialed reads work — `*` is illegal with
+// credentials) and advertises the headers the client needs, incl.
+// X-Workspace-Id. Preflight (OPTIONS) is short-circuited 204 by the route.
+func (p *Plugin) cors() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if origin := strings.TrimSpace(c.GetHeader("Origin")); origin != "" {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Vary", "Origin")
+		} else {
+			c.Header("Access-Control-Allow-Origin", "*")
+		}
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Workspace-Id")
+		c.Header("Access-Control-Max-Age", "600")
+		c.Next()
+	}
+}
+
 // requireWorkspace authenticates the browser session against dock and
 // resolves the ACTIVE workspace (Bearer access_token OR access_token
 // cookie + X-Workspace-Id). Every route is workspace-scoped; the resolved

@@ -134,6 +134,12 @@ func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 	p.registerUIRoutes(r) // self-contained /music.html (no auth; API calls carry the cookie)
 
 	api := r.Group("/api")
+	// CORS: the public library is meant to be embedded by other web apps
+	// (e.g. the 灵珠/lzhu music web UI calling from its own origin). Echo the
+	// request Origin so both anonymous and credentialed (cookie) reads work,
+	// and answer preflight on every /api path.
+	api.Use(p.cors())
+	api.OPTIONS("/*path", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	pub := p.optionalWorkspace() // library READ — public when POLAR_MUSIC_PUBLIC_WORKSPACE_ID set, else login
 	auth := p.requireWorkspace() // everything that writes / is user-specific — always login
 	{
