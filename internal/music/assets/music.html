@@ -193,9 +193,11 @@ async function api(path,opts){opts=opts||{};opts.credentials='include';opts.head
   if(!r.ok){let m='';try{m=(await r.json()).error;}catch(e){}throw new Error(m||('HTTP '+r.status));}
   return r.status===204?null:r.json();}
 
-// media src (tags use cookie→active workspace; can't send X-Workspace-Id)
-const streamSrc=id=>'/api/tracks/'+id+'/stream';
-const coverSrc=t=>t.has_cover?('/api/tracks/'+t.id+'/cover'):'';
+// media src. Tags can't send X-Workspace-Id, so append ?ws= when a workspace
+// is selected — the server honors ?ws= for anonymous play of a public 乐库.
+const wsq=(sep)=>WS?(sep+'ws='+encodeURIComponent(WS)):'';
+const streamSrc=id=>'/api/tracks/'+id+'/stream'+wsq('?');
+const coverSrc=t=>t.has_cover?('/api/tracks/'+t.id+'/cover'+wsq('?')):'';
 
 // ── state ──
 let lib=[], favset=new Set(), playlists=[], view='home', viewArg=null;
@@ -391,6 +393,40 @@ function renderQueue(){$('qlist').innerHTML=queue.map((id,i)=>{const t=trackById
   $('qlist').querySelectorAll('.qitem').forEach(el=>el.onclick=()=>{qpos=+el.dataset.i;playCurrent();});}
 
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.code==='Space'){e.preventDefault();$('pp').click();}else if(e.code==='ArrowRight'&&e.shiftKey)next(false);else if(e.code==='ArrowLeft'&&e.shiftKey)prev();});
+
+// ── workspace switcher + 乐库开放访问 toggle ──
+(function wsPanel(){
+  const wrap=document.createElement('div');
+  wrap.id='wsPanel';
+  wrap.style.cssText='position:fixed;left:12px;bottom:96px;z-index:60;background:var(--bg-elevated,#1c1c1e);color:var(--text,#fff);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px 12px;font-size:12px;box-shadow:0 8px 28px rgba(0,0,0,.45);max-width:280px';
+  wrap.innerHTML=`
+    <div style="font-weight:600;margin-bottom:6px">工作区 / 乐库</div>
+    <div style="opacity:.7;margin-bottom:6px">当前：<span id="wsCur"></span></div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input id="wsIn" placeholder="workspace id（留空=默认/登录）" style="flex:1;min-width:0;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:8px;color:inherit;padding:6px 8px;font-size:12px">
+      <button id="wsGo" style="background:var(--accent,#0a84ff);color:#fff;border:0;border-radius:8px;padding:6px 10px;cursor:pointer">切换</button>
+    </div>
+    <label id="wsPubRow" style="display:none;align-items:center;gap:8px;cursor:pointer;user-select:none">
+      <input type="checkbox" id="wsPub" style="width:16px;height:16px"><span>开放匿名访问（本乐库公开）</span>
+    </label>
+    <div id="wsHint" style="opacity:.6;margin-top:6px;font-size:11px"></div>`;
+  document.body.appendChild(wrap);
+  $('wsCur').textContent=WS||'（默认 / 登录账号）';
+  $('wsIn').value=WS||'';
+  const apply=()=>{const v=$('wsIn').value.trim();if(v)localStorage.setItem('pm.ws',v);else localStorage.removeItem('pm.ws');const u=new URL(location.href);u.searchParams.delete('ws');location.href=u.pathname+u.search;};
+  $('wsGo').onclick=apply;
+  $('wsIn').addEventListener('keydown',e=>{if(e.key==='Enter')apply();});
+  api('/api/library/settings').then(s=>{
+    $('wsPubRow').style.display='flex';
+    $('wsPub').checked=!!s.is_public;
+    $('wsHint').textContent='公开后，访客无需登录即可浏览+播放本乐库';
+    $('wsPub').onchange=async()=>{
+      try{await api('/api/library/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({is_public:$('wsPub').checked})});
+        toast($('wsPub').checked?'已开放匿名访问':'已设为私有');
+      }catch(e){$('wsPub').checked=!$('wsPub').checked;toast('设置失败：'+e.message);}
+    };
+  }).catch(()=>{$('wsHint').textContent='登录后可设置“开放访问”';});
+})();
 
 loadAll();
 </script>

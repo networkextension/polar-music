@@ -172,6 +172,11 @@ func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 
 		// AI 智能歌单 (P3) — dock LLM proxy; 503 when unconfigured.
 		api.POST("/playlists/generate", auth, p.handleGeneratePlaylist)
+
+		// 乐库 settings — read/set this workspace's "open access" (anonymous
+		// browse/play) flag. Login required; scoped to the active workspace.
+		api.GET("/library/settings", auth, p.handleGetLibSettings)
+		api.PUT("/library/settings", auth, p.handleSetLibSettings)
 	}
 }
 
