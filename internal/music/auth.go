@@ -79,6 +79,20 @@ func (p *Plugin) optionalWorkspace() gin.HandlerFunc {
 				return
 			}
 		}
+		// Per-workspace open access: if the caller names a workspace (header or
+		// ?ws=) whose 乐库 the owner marked public, allow anonymous browse/play
+		// scoped to it. <audio>/<img> tags can't send headers, so accept ?ws=.
+		reqWS := strings.TrimSpace(c.GetHeader("X-Workspace-Id"))
+		if reqWS == "" {
+			reqWS = strings.TrimSpace(c.Query("ws"))
+		}
+		if reqWS != "" && p.isWorkspacePublic(reqWS) {
+			c.Set("workspace_id", reqWS)
+			c.Set("user_id", "")
+			c.Set("role", "public")
+			c.Next()
+			return
+		}
 		if p.publicWorkspaceID != "" {
 			c.Set("workspace_id", p.publicWorkspaceID)
 			c.Set("user_id", "")

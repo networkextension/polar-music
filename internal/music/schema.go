@@ -68,6 +68,15 @@ func (p *Plugin) ensureSchema(ctx context.Context) error {
 			PRIMARY KEY (playlist_id, track_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_playlist_items_pl ON playlist_items(playlist_id, ord)`,
+
+		// Per-workspace 乐库 settings. is_public=true lets anonymous visitors
+		// browse + play this workspace's library (scoped by X-Workspace-Id or
+		// ?ws=). Replaces relying solely on the single env public workspace.
+		`CREATE TABLE IF NOT EXISTS music_lib_settings (
+			workspace_id TEXT PRIMARY KEY,
+			is_public    BOOLEAN NOT NULL DEFAULT false,
+			updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := p.DB.ExecContext(ctx, s); err != nil {
