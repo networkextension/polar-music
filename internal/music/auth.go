@@ -70,8 +70,21 @@ func (p *Plugin) optionalWorkspace() gin.HandlerFunc {
 				tok = strings.TrimSpace(ck)
 			}
 		}
+		// Desired workspace: X-Workspace-Id header (fetch) OR ?ws= query.
+		// <audio>/<img> tags can't set headers, so they pass ?ws= — without
+		// this the token branch would verify against the user's *active*
+		// workspace and 404 a track that lives in the workspace being browsed.
+		reqWS := strings.TrimSpace(c.GetHeader("X-Workspace-Id"))
+		if reqWS == "" {
+			reqWS = strings.TrimSpace(c.Query("ws"))
+		}
 		if tok != "" {
-			if res, err := p.Dock.AuthVerifyWS(tok, strings.TrimSpace(c.GetHeader("X-Workspace-Id"))); err == nil && res != nil && res.WorkspaceID != "" {
+			// When a specific workspace is requested, only accept the token
+			// resolution if it actually granted that workspace (caller is a
+			// member); otherwise fall through to the public-access check so a
+			// logged-in non-member can still browse a public 乐库.
+			if res, err := p.Dock.AuthVerifyWS(tok, reqWS); err == nil && res != nil && res.WorkspaceID != "" &&
+				(reqWS == "" || res.WorkspaceID == reqWS) {
 				c.Set("workspace_id", res.WorkspaceID)
 				c.Set("user_id", res.UserID)
 				c.Set("role", res.Role)
@@ -79,13 +92,8 @@ func (p *Plugin) optionalWorkspace() gin.HandlerFunc {
 				return
 			}
 		}
-		// Per-workspace open access: if the caller names a workspace (header or
-		// ?ws=) whose 乐库 the owner marked public, allow anonymous browse/play
-		// scoped to it. <audio>/<img> tags can't send headers, so accept ?ws=.
-		reqWS := strings.TrimSpace(c.GetHeader("X-Workspace-Id"))
-		if reqWS == "" {
-			reqWS = strings.TrimSpace(c.Query("ws"))
-		}
+		// Per-workspace open access: if the named workspace's 乐库 the owner
+		// marked public, allow anonymous browse/play scoped to it.
 		if reqWS != "" && p.isWorkspacePublic(reqWS) {
 			c.Set("workspace_id", reqWS)
 			c.Set("user_id", "")
