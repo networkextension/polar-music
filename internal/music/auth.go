@@ -64,6 +64,18 @@ func (p *Plugin) requireWorkspace() gin.HandlerFunc {
 // token), i.e. the library stays private by default.
 func (p *Plugin) optionalWorkspace() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Explicit public browse: `?public=1` forces the PUBLIC workspace and
+		// ignores any token/cookie. This is what embedders (the lzhu web UI,
+		// the iOS open-library tab + its AVPlayer stream requests) use so an
+		// ambient session cookie can't scope the browse/stream to an empty
+		// user library.
+		if c.Query("public") == "1" && p.publicWorkspaceID != "" {
+			c.Set("workspace_id", p.publicWorkspaceID)
+			c.Set("user_id", "")
+			c.Set("role", "public")
+			c.Next()
+			return
+		}
 		tok := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
 		if tok == "" {
 			if ck, err := c.Cookie("access_token"); err == nil {
