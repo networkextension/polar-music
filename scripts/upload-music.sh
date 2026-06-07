@@ -6,25 +6,45 @@
 # bytes are skipped even if renamed). Idempotent: re-run anytime.
 #
 # Usage:
-#   ./upload-music.sh <token> [dir]
+#   ./upload-music.sh [-w|--workspace <id>] <token> [dir]
 #     <token>   session access_token (Bearer). Get it from the browser:
 #               DevTools → Application → Cookies → access_token, or your CLI login.
 #     [dir]     directory to scan (default: current working directory)
+#     -w, --workspace <id>   target workspace (sent as X-Workspace-Id) so the
+#               import lands in a specific 乐库 instead of the token's active
+#               workspace. Flag wins over $POLAR_MUSIC_WORKSPACE.
 #
 # Env overrides:
 #   POLAR_MUSIC_BASE        base URL (default https://music.4950.store:2443)
-#   POLAR_MUSIC_WORKSPACE   workspace id (X-Workspace-Id). Omit to use the
+#   POLAR_MUSIC_WORKSPACE   workspace id (X-Workspace-Id). Fallback when
+#                           --workspace is not passed. Omit both to use the
 #                           token's active workspace.
 #   INSECURE=1              pass curl -k (skip TLS verify; for self-signed dev)
 set -euo pipefail
 
-TOKEN="${1:-}"
-DIR="${2:-.}"
 BASE="${POLAR_MUSIC_BASE:-https://music.4950.store:2443}"
 WS="${POLAR_MUSIC_WORKSPACE:-}"
 
+# Parse: -w/--workspace <id> flag anywhere; remaining positionals = token, dir.
+POS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -w|--workspace)
+      [ $# -ge 2 ] || { echo "$1 requires an argument" >&2; exit 2; }
+      WS="$2"; shift 2 ;;
+    --workspace=*) WS="${1#*=}"; shift ;;
+    -h|--help)
+      echo "usage: $0 [-w|--workspace <id>] <token> [dir]" >&2; exit 0 ;;
+    --) shift; while [ $# -gt 0 ]; do POS+=("$1"); shift; done ;;
+    *) POS+=("$1"); shift ;;
+  esac
+done
+
+TOKEN="${POS[0]:-}"
+DIR="${POS[1]:-.}"
+
 if [ -z "$TOKEN" ]; then
-  echo "usage: $0 <token> [dir]" >&2
+  echo "usage: $0 [-w|--workspace <id>] <token> [dir]" >&2
   exit 2
 fi
 [ -d "$DIR" ] || { echo "not a directory: $DIR" >&2; exit 2; }
@@ -38,7 +58,7 @@ if command -v shasum >/dev/null 2>&1; then SHA() { shasum -a 256 "$1" | awk '{pr
 elif command -v sha256sum >/dev/null 2>&1; then SHA() { sha256sum "$1" | awk '{print $1}'; }
 else echo "need shasum or sha256sum" >&2; exit 2; fi
 
-echo "==> library: $BASE   dir: $DIR"
+echo "==> library: $BASE   dir: $DIR   workspace: ${WS:-<token active>}"
 
 # 1) pull existing sha256 set (paginate)
 echo "==> fetching existing track hashes…"
