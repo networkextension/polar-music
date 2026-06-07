@@ -70,13 +70,18 @@ func (p *Plugin) optionalWorkspace() gin.HandlerFunc {
 				tok = strings.TrimSpace(ck)
 			}
 		}
-		// Desired workspace: X-Workspace-Id header (fetch) OR ?ws= query.
-		// <audio>/<img> tags can't set headers, so they pass ?ws= — without
-		// this the token branch would verify against the user's *active*
-		// workspace and 404 a track that lives in the workspace being browsed.
+		// Desired workspace: X-Workspace-Id header (fetch) OR a query param —
+		// <audio>/<img> tags and cross-site embeds (e.g. share.lzhu.cn) can't
+		// set headers, so accept ?ws= and the common aliases the embedders use
+		// (x-workspace-id / workspace_id). Without this the token branch would
+		// verify against the user's *active* workspace and 404 a track that
+		// lives in the workspace being browsed.
 		reqWS := strings.TrimSpace(c.GetHeader("X-Workspace-Id"))
-		if reqWS == "" {
-			reqWS = strings.TrimSpace(c.Query("ws"))
+		for _, k := range []string{"ws", "x-workspace-id", "workspace_id"} {
+			if reqWS != "" {
+				break
+			}
+			reqWS = strings.TrimSpace(c.Query(k))
 		}
 		if tok != "" {
 			// When a specific workspace is requested, only accept the token
