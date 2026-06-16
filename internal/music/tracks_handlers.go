@@ -185,15 +185,50 @@ func (p *Plugin) handleStreamTrack(c *gin.Context) {
 		notFound(c, "track not found")
 		return
 	}
-	signed, err := p.signedAssetURL(t.AudioAssetID, c.GetString("workspace_id"))
+	signed, err := p.signedAudioURL(t, c.GetString("workspace_id"))
 	if err != nil || signed == "" {
 		serverErr(c, "could not sign asset url")
 		return
 	}
-	// Pass the track's real mime through to the blob endpoint as ?ct= so it
-	// serves audio/* instead of application/octet-stream — Safari's <audio>
-	// refuses octet-stream (Chrome sniffs + plays). The blob store is
-	// sha256-keyed with no mime of its own; this is the asset's true type.
+	c.Redirect(http.StatusFound, signed)
+}
+
+// GET /api/tracks/:id/stream-url → {"url": "<signed asset url>"}. The web
+// player points <audio src> straight at this URL instead of the /stream 302:
+// Safari won't do HTTP Range streaming THROUGH a redirect — it falls back to
+// downloading the whole file (no seek, frozen progress). Same signed + ?ct=
+// URL, just returned as JSON so the client sets it directly (Chrome was fine
+// either way; this makes Safari stream too).
+func (p *Plugin) handleStreamURLTrack(c *gin.Context) {
+	t, err := p.getTrack(c.Request.Context(), c.GetString("workspace_id"), c.Param("id"))
+	if err != nil {
+		serverErr(c, err.Error())
+		return
+	}
+	if t == nil {
+		notFound(c, "track not found")
+		return
+	}
+	signed, err := p.signedAudioURL(t, c.GetString("workspace_id"))
+	if err != nil || signed == "" {
+		serverErr(c, "could not sign asset url")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": signed})
+}
+
+// signedAudioURL mints the signed asset URL for a track's audio and appends
+// the track's real mime as ?ct= so the blob endpoint serves audio/* instead
+// of application/octet-stream (Safari's <audio> refuses octet-stream). The
+// blob store is sha256-keyed with no mime of its own.
+func (p *Plugin) signedAudioURL(t *Track, ws string) (string, error) {
+	signed, err := p.signedAssetURL(t.AudioAssetID, ws)
+	if err != nil {
+		return "", err
+	}
+	if signed == "" {
+		return "", fmt.Errorf("empty signed url")
+	}
 	if t.Mime != "" {
 		sep := "?"
 		if strings.Contains(signed, "?") {
@@ -201,7 +236,7 @@ func (p *Plugin) handleStreamTrack(c *gin.Context) {
 		}
 		signed += sep + "ct=" + url.QueryEscape(t.Mime)
 	}
-	c.Redirect(http.StatusFound, signed)
+	return signed, nil
 }
 
 // signedAssetURL mints a short-lived signed provider URL for a workspace

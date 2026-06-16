@@ -347,7 +347,13 @@ let curDurMs=0;
 function effDur(){const d=A.duration;return (isFinite(d)&&d>0)?d:(curDurMs>0?curDurMs/1000:0);}
 function playCurrent(){const t=trackById(queue[qpos]);if(!t)return;
   curDurMs=t.duration_ms||0;
-  A.src=streamSrc(t.id);A.play().catch(()=>{});
+  // Point <audio> at the DIRECT signed URL, not the /stream 302: Safari won't
+  // do HTTP Range streaming through a redirect (it downloads the whole file →
+  // no seek, frozen progress). Resolve the URL as JSON, then set src. Guard
+  // against a stale resolve clobbering a track the user already skipped to.
+  const myPos=qpos;
+  api('/api/tracks/'+t.id+'/stream-url').then(r=>{if(qpos!==myPos||!r||!r.url)return;A.src=r.url;A.play().catch(()=>{});})
+    .catch(()=>{if(qpos===myPos){A.src=streamSrc(t.id);A.play().catch(()=>{});}});
   $('npCover').src=coverSrc(t)||'';$('npCover').style.visibility=t.has_cover?'visible':'hidden';
   $('npTitle').textContent=t.title;$('npArtist').textContent=(t.artist||'')+' — '+(t.album||'');
   syncFav(t.id);document.querySelectorAll('tbody tr').forEach(tr=>tr.classList.toggle('playing',tr.dataset.id===queue[qpos]));

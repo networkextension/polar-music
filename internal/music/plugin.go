@@ -149,6 +149,7 @@ func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 		api.GET("/tracks", pub, p.handleListTracks)
 		api.GET("/tracks/:id", pub, p.handleGetTrack)
 		api.GET("/tracks/:id/stream", pub, p.handleStreamTrack)
+		api.GET("/tracks/:id/stream-url", pub, p.handleStreamURLTrack)
 		api.GET("/tracks/:id/cover", pub, p.handleTrackCover)
 		api.GET("/albums", pub, p.handleListAlbums)
 		api.GET("/artists", pub, p.handleListArtists)
