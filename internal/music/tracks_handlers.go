@@ -185,12 +185,23 @@ func (p *Plugin) handleStreamTrack(c *gin.Context) {
 		notFound(c, "track not found")
 		return
 	}
-	url, err := p.signedAssetURL(t.AudioAssetID, c.GetString("workspace_id"))
-	if err != nil || url == "" {
+	signed, err := p.signedAssetURL(t.AudioAssetID, c.GetString("workspace_id"))
+	if err != nil || signed == "" {
 		serverErr(c, "could not sign asset url")
 		return
 	}
-	c.Redirect(http.StatusFound, url)
+	// Pass the track's real mime through to the blob endpoint as ?ct= so it
+	// serves audio/* instead of application/octet-stream — Safari's <audio>
+	// refuses octet-stream (Chrome sniffs + plays). The blob store is
+	// sha256-keyed with no mime of its own; this is the asset's true type.
+	if t.Mime != "" {
+		sep := "?"
+		if strings.Contains(signed, "?") {
+			sep = "&"
+		}
+		signed += sep + "ct=" + url.QueryEscape(t.Mime)
+	}
+	c.Redirect(http.StatusFound, signed)
 }
 
 // signedAssetURL mints a short-lived signed provider URL for a workspace
