@@ -340,8 +340,20 @@ function fillRows(ts){const tb=$('tb');const ids=ts.map(t=>t.id);
 // ── playback (stream via /api/tracks/:id/stream → 302 signed, Range/seek) ──
 function trackById(id){return lib.find(t=>t.id===id)||(_plTracks&&_plTracks.find(t=>t.id===id));}
 function playList(ids,i){queue=ids.slice();qpos=i;playCurrent();}
+// Effective duration: browsers report A.duration=Infinity for some Range-
+// streamed formats (notably FLAC on Safari) until fully buffered, which
+// freezes the progress bar at 0. Fall back to the track's metadata duration_ms.
+let curDurMs=0;
+function effDur(){const d=A.duration;return (isFinite(d)&&d>0)?d:(curDurMs>0?curDurMs/1000:0);}
 function playCurrent(){const t=trackById(queue[qpos]);if(!t)return;
-  A.src=streamSrc(t.id);A.play().catch(()=>{});
+  curDurMs=t.duration_ms||0;
+  // Point <audio> at the DIRECT signed URL, not the /stream 302: Safari won't
+  // do HTTP Range streaming through a redirect (it downloads the whole file →
+  // no seek, frozen progress). Resolve the URL as JSON, then set src. Guard
+  // against a stale resolve clobbering a track the user already skipped to.
+  const myPos=qpos;
+  api('/api/tracks/'+t.id+'/stream-url').then(r=>{if(qpos!==myPos||!r||!r.url)return;A.src=r.url;A.play().catch(()=>{});})
+    .catch(()=>{if(qpos===myPos){A.src=streamSrc(t.id);A.play().catch(()=>{});}});
   $('npCover').src=coverSrc(t)||'';$('npCover').style.visibility=t.has_cover?'visible':'hidden';
   $('npTitle').textContent=t.title;$('npArtist').textContent=(t.artist||'')+' — '+(t.album||'');
   syncFav(t.id);document.querySelectorAll('tbody tr').forEach(tr=>tr.classList.toggle('playing',tr.dataset.id===queue[qpos]));
@@ -373,8 +385,8 @@ function setNowPlaying(t){
 }
 function updatePositionState(){
   if(!hasMS||typeof navigator.mediaSession.setPositionState!=='function')return;
-  if(!A.duration||!isFinite(A.duration))return;
-  try{navigator.mediaSession.setPositionState({duration:A.duration,position:Math.min(A.currentTime,A.duration),playbackRate:A.playbackRate||1});}catch(e){}
+  const dur=effDur();if(!dur)return;
+  try{navigator.mediaSession.setPositionState({duration:dur,position:Math.min(A.currentTime,dur),playbackRate:A.playbackRate||1});}catch(e){}
 }
 if(hasMS){
   const ms=navigator.mediaSession;
@@ -383,16 +395,16 @@ if(hasMS){
   set('pause',()=>A.pause());
   set('previoustrack',()=>prev());
   set('nexttrack',()=>next(false));
-  set('seekto',d=>{if(d&&d.seekTime!=null&&isFinite(A.duration)){A.currentTime=d.seekTime;updatePositionState();}});
+  set('seekto',d=>{if(d&&d.seekTime!=null){A.currentTime=d.seekTime;updatePositionState();}});
   set('stop',()=>{A.pause();A.currentTime=0;});
 }
 function toggleShuffle(){shuffle=!shuffle;$('shuffle').classList.toggle('on',shuffle);}
 $('shuffle').onclick=()=>{toggleShuffle();toast('随机 '+(shuffle?'开':'关'));};
 $('repeat').onclick=()=>{repeat=(repeat+1)%3;$('repeat').classList.toggle('on',repeat>0);toast(['循环关闭','列表循环','单曲循环'][repeat]);};
-A.ontimeupdate=()=>{if(!A.duration)return;const p=A.currentTime/A.duration*100;$('seekFill').style.width=p+'%';$('seekKnob').style.left=p+'%';$('cur').textContent=fmt(A.currentTime);$('durt').textContent=fmt(A.duration);updatePositionState();};
+A.ontimeupdate=()=>{const dur=effDur();if(!dur)return;const p=Math.min(A.currentTime/dur*100,100);$('seekFill').style.width=p+'%';$('seekKnob').style.left=p+'%';$('cur').textContent=fmt(A.currentTime);$('durt').textContent=fmt(dur);updatePositionState();};
 function barSeek(bar,e,cb){const r=bar.getBoundingClientRect();let p=(e.clientX-r.left)/r.width;p=Math.max(0,Math.min(1,p));cb(p);}
-$('seek').onclick=e=>barSeek($('seek'),e,p=>{if(A.duration)A.currentTime=p*A.duration;});
-let seeking=false;$('seek').onmousedown=()=>seeking=true;document.addEventListener('mousemove',e=>{if(seeking&&A.duration)barSeek($('seek'),e,p=>A.currentTime=p*A.duration);});document.addEventListener('mouseup',()=>seeking=false);
+$('seek').onclick=e=>barSeek($('seek'),e,p=>{const dur=effDur();if(dur)A.currentTime=p*dur;});
+let seeking=false;$('seek').onmousedown=()=>seeking=true;document.addEventListener('mousemove',e=>{if(seeking){const dur=effDur();if(dur)barSeek($('seek'),e,p=>A.currentTime=p*dur);}});document.addEventListener('mouseup',()=>seeking=false);
 A.volume=0.9;$('vol').onclick=e=>barSeek($('vol'),e,p=>{A.volume=p;$('volFill').style.width=p*100+'%';$('volKnob').style.left=p*100+'%';});
 
 // ── favorites ──
