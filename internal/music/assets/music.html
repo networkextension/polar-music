@@ -437,54 +437,72 @@ function renderQueue(){$('qlist').innerHTML=queue.map((id,i)=>{const t=trackById
 
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.code==='Space'){e.preventDefault();$('pp').click();}else if(e.code==='ArrowRight'&&e.shiftKey)next(false);else if(e.code==='ArrowLeft'&&e.shiftKey)prev();});
 
-// ── workspace switcher + 乐库开放访问 toggle ──
-(function wsPanel(){
-  const wrap=document.createElement('div');
-  wrap.id='wsPanel';
-  wrap.style.cssText='position:fixed;left:12px;bottom:96px;z-index:60;background:var(--bg-elevated,#1c1c1e);color:var(--text,#fff);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px 12px;font-size:12px;box-shadow:0 8px 28px rgba(0,0,0,.45);max-width:280px';
-  const inStyle='flex:1;min-width:0;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:8px;color:inherit;padding:6px 8px;font-size:12px';
-  wrap.innerHTML=`
-    <div style="font-weight:600;margin-bottom:6px">工作区 / 乐库</div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <select id="wsSel" style="${inStyle}"></select>
-      <button id="wsDel" title="从列表移除选中项" style="background:rgba(255,255,255,.10);color:inherit;border:0;border-radius:8px;padding:6px 9px;cursor:pointer">删</button>
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input id="wsIn" placeholder="新增 workspace id" style="${inStyle}">
-      <button id="wsGo" style="background:var(--accent,#0a84ff);color:#fff;border:0;border-radius:8px;padding:6px 10px;cursor:pointer">切换</button>
-    </div>
-    <label id="wsPubRow" style="display:none;align-items:center;gap:8px;cursor:pointer;user-select:none">
-      <input type="checkbox" id="wsPub" style="width:16px;height:16px"><span>开放匿名访问（本乐库公开）</span>
-    </label>
-    <div id="wsHint" style="opacity:.6;margin-top:6px;font-size:11px"></div>`;
-  document.body.appendChild(wrap);
-  // remembered workspace list (local cache)
-  const LKEY='pm.ws.list';
-  const loadList=()=>{try{return JSON.parse(localStorage.getItem(LKEY)||'[]').filter(Boolean);}catch(e){return [];}};
-  const saveList=a=>localStorage.setItem(LKEY,JSON.stringify(a.filter(Boolean).slice(0,20)));
-  const remember=id=>{if(!id)return;const a=loadList().filter(x=>x!==id);a.unshift(id);saveList(a);};
-  if(WS)remember(WS); // make sure the current one is in the list
-  function renderSel(){
-    const list=loadList(), sel=$('wsSel');
-    sel.innerHTML='<option value="">默认 / 登录账号</option>'+list.map(id=>`<option value="${esc(id)}"${id===WS?' selected':''}>${esc(id)}</option>`).join('');
-    sel.value=WS||'';
-  }
-  renderSel();
-  const apply=v=>{v=(v||'').trim();if(v){localStorage.setItem('pm.ws',v);remember(v);}else localStorage.removeItem('pm.ws');const u=new URL(location.href);u.searchParams.delete('ws');location.href=u.pathname+u.search;};
-  $('wsSel').onchange=()=>apply($('wsSel').value);
-  $('wsGo').onclick=()=>apply($('wsIn').value);
-  $('wsIn').addEventListener('keydown',e=>{if(e.key==='Enter')apply($('wsIn').value);});
-  $('wsDel').onclick=()=>{const id=$('wsSel').value;if(!id){toast('默认项无法移除');return;}saveList(loadList().filter(x=>x!==id));if(id===WS){apply('');}else{renderSel();toast('已从列表移除');}};
-  api('/api/library/settings').then(s=>{
-    $('wsPubRow').style.display='flex';
-    $('wsPub').checked=!!s.is_public;
-    $('wsHint').textContent='公开后，访客无需登录即可浏览+播放本乐库';
-    $('wsPub').onchange=async()=>{
-      try{await api('/api/library/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({is_public:$('wsPub').checked})});
-        toast($('wsPub').checked?'已开放匿名访问':'已设为私有');
-      }catch(e){$('wsPub').checked=!$('wsPub').checked;toast('设置失败：'+e.message);}
+// ── 右上角账号 chip:登录 / 切乐库 / 退出登录 ──
+// 新机器无 cookie 也能在本页登录(POST /api/login → music 源同源 cookie),
+// 乐库切换用 /api/me 拉到的友好名字,不再手填 workspace id。
+(function accountChip(){
+  const chip=document.createElement('button');
+  chip.id='acctChip';
+  chip.style.cssText='position:fixed;top:12px;right:14px;z-index:70;display:flex;align-items:center;gap:6px;background:var(--bg-elevated,#1c1c1e);color:var(--text,#fff);border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.35)';
+  chip.innerHTML='<span style="font-size:14px">👤</span><span id="acctName">登录</span>';
+  document.body.appendChild(chip);
+  const card=document.createElement('div');
+  card.id='acctCard';
+  card.style.cssText='position:fixed;top:50px;right:14px;z-index:71;width:288px;background:var(--bg-elevated,#1c1c1e);color:var(--text,#fff);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:14px;font-size:13px;box-shadow:0 12px 36px rgba(0,0,0,.5);display:none';
+  document.body.appendChild(card);
+  const inStyle='width:100%;box-sizing:border-box;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:8px;color:inherit;padding:8px 10px;font-size:13px;margin-bottom:8px';
+  const btnStyle='width:100%;background:var(--accent,#0a84ff);color:#fff;border:0;border-radius:8px;padding:8px;cursor:pointer;font-size:13px';
+  chip.onclick=e=>{e.stopPropagation();card.style.display=card.style.display==='none'?'block':'none';};
+  document.addEventListener('click',e=>{if(!card.contains(e.target)&&!chip.contains(e.target))card.style.display='none';});
+
+  function loggedOut(){
+    $('acctName').textContent='登录';
+    card.innerHTML=`<div style="font-weight:600;margin-bottom:10px">登录乐库</div>
+      <input id="acEmail" type="email" placeholder="邮箱" autocomplete="username" style="${inStyle}">
+      <input id="acPass" type="password" placeholder="密码" autocomplete="current-password" style="${inStyle}">
+      <button id="acLogin" style="${btnStyle}">登录</button>
+      <div id="acErr" style="color:#ff6b6b;margin-top:8px;font-size:12px;min-height:14px"></div>`;
+    const doLogin=async()=>{
+      const email=$('acEmail').value.trim(), password=$('acPass').value;
+      if(!email||!password){$('acErr').textContent='请输入邮箱和密码';return;}
+      $('acLogin').disabled=true;$('acLogin').textContent='登录中…';
+      try{
+        const r=await fetch('/api/login',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+        if(!r.ok){let m='登录失败';try{const j=await r.json();m=j.message||j.error||m;}catch(e){}throw new Error(m);}
+        location.reload();
+      }catch(e){$('acErr').textContent=e.message;$('acLogin').disabled=false;$('acLogin').textContent='登录';}
     };
-  }).catch(()=>{$('wsHint').textContent='登录后可设置“开放访问”';});
+    $('acLogin').onclick=doLogin;
+    $('acPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+  }
+
+  function loggedIn(me){
+    const uname=(me.user&&(me.user.username||me.user.name||me.user.email))||'已登录';
+    $('acctName').textContent=uname;
+    const teams=me.teams||[];
+    const row=(id,name,active)=>`<div class="acWs" data-id="${esc(id)}" style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer;${active?'background:rgba(10,132,255,.18)':''}"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>${active?'<span style="color:var(--accent,#0a84ff)">✓</span>':''}</div>`;
+    card.innerHTML=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:16px">👤</span><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(uname)}</b></div>
+      <div style="opacity:.6;font-size:11px;margin-bottom:4px">切换乐库（工作区）</div>
+      <div id="acWsList" style="max-height:220px;overflow:auto;margin:0 -4px">
+        ${row('','默认 / 登录账号',!WS)}
+        ${teams.map(t=>row(t.id,t.name||t.id,t.id===WS)).join('')||'<div style="opacity:.5;padding:6px 8px">（无其它乐库）</div>'}
+      </div>
+      <label id="acPubRow" style="display:none;align-items:center;gap:8px;cursor:pointer;margin:10px 0 4px"><input type="checkbox" id="acPub" style="width:15px;height:15px"><span style="font-size:12px">开放匿名访问（本乐库公开）</span></label>
+      <button id="acLogout" style="width:100%;background:rgba(255,255,255,.08);color:inherit;border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:7px;cursor:pointer;margin-top:8px">退出登录</button>
+      <div id="acHint" style="opacity:.55;margin-top:8px;font-size:11px"></div>`;
+    const go=id=>{if(id)localStorage.setItem('pm.ws',id);else localStorage.removeItem('pm.ws');const u=new URL(location.href);u.searchParams.delete('ws');location.href=u.pathname+u.search;};
+    card.querySelectorAll('.acWs').forEach(el=>el.onclick=()=>go(el.dataset.id||''));
+    $('acLogout').onclick=async()=>{try{await fetch('/api/logout',{method:'POST',credentials:'include'});}catch(e){}localStorage.removeItem('pm.ws');location.reload();};
+    api('/api/library/settings').then(s=>{
+      $('acPubRow').style.display='flex';$('acPub').checked=!!s.is_public;
+      $('acHint').textContent='公开后访客无需登录即可浏览+播放本乐库';
+      $('acPub').onchange=async()=>{try{await api('/api/library/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({is_public:$('acPub').checked})});toast($('acPub').checked?'已开放匿名访问':'已设为私有');}catch(e){$('acPub').checked=!$('acPub').checked;toast('设置失败：'+e.message);}};
+    }).catch(()=>{});
+  }
+
+  fetch('/api/me',{credentials:'include'}).then(r=>r.ok?r.json():null)
+    .then(d=>{ if(d&&d.user) loggedIn(d); else loggedOut(); })
+    .catch(()=>loggedOut());
 })();
 
 loadAll();
