@@ -32,6 +32,7 @@ type Plugin struct {
 	Listen     string
 	Ver        string
 	MetricsTok string
+	dockBase   string // POLAR_DOCK_BASE — for browser-facing login/me proxy (user sessions)
 
 	publicBaseURL string // POLAR_MUSIC_PUBLIC_BASE_URL — for the /api/nav sidebar link
 
@@ -113,6 +114,7 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 		Listen:            cfg.Listen,
 		Ver:               cfg.BuildVersion,
 		MetricsTok:        cfg.MetricsToken,
+		dockBase:          strings.TrimRight(strings.TrimSpace(cfg.DockBase), "/"),
 		publicBaseURL:     strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
 		publicWorkspaceID: strings.TrimSpace(cfg.PublicWorkspaceID),
 		llmProxyURL:       strings.TrimSpace(cfg.LLMProxyURL),
@@ -140,6 +142,14 @@ func (p *Plugin) RegisterRoutes(r gin.IRouter) {
 	// and answer preflight on every /api path.
 	api.Use(p.cors())
 	api.OPTIONS("/*path", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	// User-session auth proxy (no plugin auth): lets a fresh browser log in on
+	// the music page itself and switch 乐库. music-svc forwards to dock's
+	// user-level endpoints and lands the access_token cookie on THIS origin, so
+	// <audio>/<img> media tags (which can't send headers) keep authenticating.
+	api.POST("/login", p.handleLogin)
+	api.GET("/me", p.handleMe)
+	api.POST("/logout", p.handleLogout)
 	pub := p.optionalWorkspace() // library READ — public when POLAR_MUSIC_PUBLIC_WORKSPACE_ID set, else login
 	auth := p.requireWorkspace() // everything that writes / is user-specific — always login
 	{
