@@ -105,6 +105,7 @@ tbody tr.playing .eq{display:inline-flex}
 .idx .eq{display:none;gap:2px;align-items:flex-end;height:13px;justify-content:center}
 .idx .eq i{width:2.5px;background:var(--accent);animation:eq .8s ease-in-out infinite}
 .idx .eq i:nth-child(2){animation-delay:.2s}.idx .eq i:nth-child(3){animation-delay:.4s}
+body:not(.playing) .eq i{animation-play-state:paused}
 @keyframes eq{0%,100%{height:4px}50%{height:13px}}
 tr:hover .idx .num{display:none}
 .song{display:flex;align-items:center;gap:11px}
@@ -205,7 +206,7 @@ tr:hover .rowact button{opacity:1}
       <a data-view="songs"><svg class="icon" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>歌曲<span class="ct" id="ctSongs">0</span></a>
       <a data-view="albums"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.4"/></svg>专辑<span class="ct" id="ctAlbums">0</span></a>
       <a data-view="artists"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>艺人<span class="ct" id="ctArtists">0</span></a>
-      <a data-view="fav"><svg class="icon" viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg>收藏<span class="ct" id="ctFav">0</span></a>
+      <a data-view="fav"><svg class="icon" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>收藏<span class="ct" id="ctFav">0</span></a>
     </nav>
     <div class="sechead">歌单 <button id="newPl" title="新建歌单"><svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M12 5v14M5 12h14"/></svg></button></div>
     <div class="pls" id="pls"></div>
@@ -221,7 +222,7 @@ tr:hover .rowact button{opacity:1}
   <div class="np">
     <img class="cov" id="npCover" alt="">
     <div class="meta"><div class="t" id="npTitle">未在播放</div><div class="a" id="npArtist">拖拽音乐到此，或点「添加音乐」</div></div>
-    <button class="heart" id="npFav" title="收藏"><svg class="icon" viewBox="0 0 24 24" style="width:17px;height:17px"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg></button>
+    <button class="heart" id="npFav" title="收藏"><svg class="icon" viewBox="0 0 24 24" style="width:17px;height:17px"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></button>
   </div>
   <div class="center">
     <div class="transport">
@@ -448,7 +449,7 @@ function fillRows(ts){
     <td class="idx"><span class="num">${i+1}</span><span class="eq"><i></i><i></i><i></i></span></td>
     <td class="col-name"><div class="song"><img class="thumb" src="${t.cover||''}" onerror="this.style.visibility='hidden'"><div><div class="name">${esc(t.title)}</div><div class="nm2">${esc(t.artist)}</div></div></div></td>
     <td>${esc(t.album)}</td>
-    <td class="fav ${favs.has(t.key)?'on':''}" data-fav><svg class="icon" viewBox="0 0 24 24" style="width:15px;height:15px;${favs.has(t.key)?'fill:currentColor':''}"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg></td>
+    <td class="fav ${favs.has(t.key)?'on':''}" data-fav><svg class="icon" viewBox="0 0 24 24" style="width:15px;height:15px;${favs.has(t.key)?'fill:currentColor':''}"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></td>
     <td class="time"><span class="dur">${fmt(t.dur)}</span></td>
     <td class="rowact"><button data-add title="加入歌单"><svg class="icon" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M12 5v14M5 12h14"/></svg></button></td></tr>`).join('');
   tb.querySelectorAll('tr').forEach((tr,i)=>{const id=+tr.dataset.id,t=byId(id);
@@ -468,8 +469,8 @@ function playCurrent(){const t=byId(queue[qpos]);if(!t)return;
   syncFav(t);document.querySelectorAll('tbody tr').forEach(tr=>tr.classList.toggle('playing',+tr.dataset.id===queue[qpos]));
   renderQueue();document.title='▶ '+t.title;}
 $('pp').onclick=()=>{if(!queue.length){if(lib.length)playList(lib.map(t=>t.id),0);return;}A.paused?A.play():A.pause();};
-A.onplay=()=>$('ppIcon').setAttribute('d','M7 5h3.5v14H7zM13.5 5H17v14h-3.5z');
-A.onpause=()=>$('ppIcon').setAttribute('d','M8 5v14l11-7z');
+A.onplay=()=>{document.body.classList.add('playing');$('ppIcon').querySelector('path').setAttribute('d','M7 5h3.5v14H7zM13.5 5H17v14h-3.5z');};
+A.onpause=()=>{document.body.classList.remove('playing');$('ppIcon').querySelector('path').setAttribute('d','M8 5v14l11-7z');};
 A.onended=()=>next(true);
 function next(auto){if(!queue.length)return;
   if(repeat===2&&auto){A.currentTime=0;A.play();return;}
