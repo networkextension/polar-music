@@ -468,8 +468,8 @@ function playCurrent(){const t=byId(queue[qpos]);if(!t)return;
   syncFav(t);document.querySelectorAll('tbody tr').forEach(tr=>tr.classList.toggle('playing',+tr.dataset.id===queue[qpos]));
   renderQueue();document.title='▶ '+t.title;}
 $('pp').onclick=()=>{if(!queue.length){if(lib.length)playList(lib.map(t=>t.id),0);return;}A.paused?A.play():A.pause();};
-A.onplay=()=>$('ppIcon').setAttribute('d','M7 5h3.5v14H7zM13.5 5H17v14h-3.5z');
-A.onpause=()=>$('ppIcon').setAttribute('d','M8 5v14l11-7z');
+A.onplay=()=>$('ppIcon').querySelector('path').setAttribute('d','M7 5h3.5v14H7zM13.5 5H17v14h-3.5z');
+A.onpause=()=>$('ppIcon').querySelector('path').setAttribute('d','M8 5v14l11-7z');
 A.onended=()=>next(true);
 function next(auto){if(!queue.length)return;
   if(repeat===2&&auto){A.currentTime=0;A.play();return;}
